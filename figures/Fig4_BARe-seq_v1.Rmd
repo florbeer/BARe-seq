@@ -19,17 +19,17 @@ require(pheatmap)
 require(stringr)
 require(dplyr)
 
-test2 <- read.delim("/groups/stark/lorbeer/STARR-TWIST/STARR_TWIST_metadata_v2_Ohlerincluded.txt")
-test1 <- read.delim("/groups/stark/lorbeer/STARR-TWIST/STARR_TWIST_metadata_v2.txt")
-test3 <- readRDS("/groups/stark/lorbeer/STARR-TWIST/Oligos_with_motif_counts_2022code_subsettedmotifs_Ohlerincluded.rds")
-enhancers <- test3[which(test3$`oligos_motif_counts$ID` %in% test1$ID),]
-colnames(enhancers) <- c("seq_ID", "ETS", "SREBP", "Trl", "AP1", "GATA", "twist", "Ohler6", "Ohler8", "Dref", "Ohler7", "Ohler1")
+STARR <- fread("/groups/stark/lorbeer/Libraries/STARR_TWIST_metadata_v2_corrected_withOhler.txt")
+colnames(STARR)[42:52] <- c("ETS", "SREBP", "Trl", "AP1", "GATA", "twist", "Ohler6", "Ohler8", "Dref", "Ohler7", "Ohler1")
+STARR[, seq_ID := sub("_[^_]+$", "", ID)]
+
+main_mots <- c("ETS", "SREBP", "Trl", "AP1", "GATA", "twist", "Ohler6", "Dref", "Ohler7", "Ohler1")
 
 ```
 
 
 ```{r, echo=FALSE}
-main_mots <- c("ETS", "SREBP", "Trl", "AP1", "GATA", "twist", "Ohler6", "Ohler8", "Dref", "Ohler7", "Ohler1")
+
 TF_motifs <- main_mots
 names(TF_motifs) <- main_mots
 
@@ -66,21 +66,74 @@ TF_freq$ymax = cumsum(TF_freq$fraction)
 # Compute the bottom of each rectangle
 TF_freq$ymin = c(0, head(TF_freq$ymax, n=-1))
 
-#install.packages("wesanderson")
-library(wesanderson)
-#wes_col <- c(wes_palette("Zissou1", 5, type = c("discrete")), wes_palette("Darjeeling2", 4, type = c("discrete")))
-wes_col <- c("maroon3", "blue", "orange", "orangered1",  "darkblue", "steelblue2", "turquoise3","turquoise4", "tomato1", "darkred", "lightsalmon2")
+motif_cols <- c(
+  "ETS" = "darkorange",
+  "GATA" = "red",
+  "AP1" = "orange", 
+  "SREBP" = "darkred", 
+  "Trl" = "pink",
+  "twist" = "pink3",
+  "Ohler6" = "lightblue",  
+  "Ohler7" = "turquoise4",
+  "Ohler1" = "darkblue",
+  "Dref" = "blue"
+)
 
-# Make the plot
-ggplot(TF_freq, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=Var1)) +
+# Set plotting order manually
+plot_order <- c("ETS", "GATA", "AP1", "SREBP", "Trl", "twist", "Ohler6", "Ohler7", "Ohler1", "Dref")
+
+TF_freq <- TF_freq %>%
+  mutate(Var1 = factor(Var1, levels = plot_order)) %>%
+  arrange(Var1) %>%
+  mutate(
+    ymax = cumsum(Freq),
+    ymin = lag(ymax, default = 0),
+    label_pos = (ymax + ymin) / 2
+  )
+
+ggplot(TF_freq, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = Var1)) +
   geom_rect() +
-  scale_fill_manual(values = wes_col) + 
-  coord_polar(theta="y") + # Try to remove that to understand how the chart is built initially
-  xlim(c(2, 4)) + # Try to remove that to see how to make a pie chart
+  geom_text(
+    aes(x = 3.5, y = label_pos, label = Freq),
+    color = "white",
+    size = 4
+  ) +
+  scale_fill_manual(values = motif_cols, breaks = plot_order) +
+  coord_polar(theta = "y") +
+  xlim(c(2, 4)) +
   theme_void()
 
 print(TF_freq)
 
+
+```
+##log2FC of medians of groups 
+```{R, echo = FALSE}
+
+
+
+
+```
+
+##Multivariate analysis of enhancer motifs
+```{R, echo = FALSE}
+
+
+
+
+```
+
+##Meta analysis 
+```{R, echo = FALSE}
+
+
+
+
+```
+
+## motif PWM 
+```{R, echo = FALSE}
+data_30_annotated <- read.delim("/groups/stark/lorbeer/Burst_params_DG/Parameters_E57_v3/data_30_annotated_muKS.txt")
 
 
 
