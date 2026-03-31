@@ -183,7 +183,7 @@ plot_slopes <- function(stats_df, title_text) {
     labs(
       title = title_text,
       x = "Sample",
-      y = "Slope (log10 response vs log10 exp)"
+      y = "Slope (log10 exp vs log10 response)"
     ) +
     theme_classic(base_size = 15) +
     theme(
@@ -195,15 +195,20 @@ plot_slopes <- function(stats_df, title_text) {
 plot_slopes(bfreq_stats_min, "Slope of log10(exp) ~ log10(bfreq) by Sample (KS pval & mu)")
 plot_slopes(bsize_stats_min, "Slope of log10(exp) ~log10(bsize) by Sample (KS pval & mu")
 
+# pdf("/groups/stark/lorbeer/Burst_params_DG/exp_v_bfreq_slope_5x5.pdf", width = 5, height = 5)
+# plot_slopes(bfreq_stats_min, "Slope of log10(exp) ~log10(bfreq) by Sample (KS pval & mu")
+# dev.off()
 
-
+# pdf("/groups/stark/lorbeer/Burst_params_DG/exp_v_bsize_slope_5x5.pdf", width = 5, height = 5)
+# plot_slopes(bsize_stats_min, "Slope of log10(exp) ~log10(bsize) by Sample (KS pval & mu")
+# dev.off()
 
 ```
 ## promoters 
 
 ```{r, echo = FALSE}
 
-dat %>%
+promoter_bfreq <- dat %>%
   filter(KS_pval > 0.01, 
          high_mu == TRUE, 
          sample %in% c("libFL008_E28_RT2_pooledby2",
@@ -226,7 +231,9 @@ dat %>%
   theme_classic(base_size = 15)+ theme(legend.position="none")+ 
   ggtitle("promoter KS pval > 0.01 & high mu")
 
-dat %>%
+promoter_bfreq
+
+promoter_bsize <- dat %>%
   filter(KS_pval > 0.01, 
          high_mu == TRUE, 
          sample %in% c(
@@ -248,14 +255,23 @@ dat %>%
   coord_cartesian(ylim = c(-1.25, 1.25), xlim = c(-1.5, 1.5)) +
   theme_classic(base_size = 15)+ theme(legend.position="none")+ 
   ggtitle("promoter KS pval > 0.01 & high mu")
+promoter_bsize
 
+
+# pdf("/groups/stark/lorbeer/Burst_params_DG/exp_v_bfreq_promoters_5x5.pdf", width = 5, height = 5)
+# print(promoter_bfreq)
+# dev.off()
+
+# pdf("/groups/stark/lorbeer/Burst_params_DG/exp_v_bsize_promoters_5x5.pdf", width = 5, height = 5)
+# print(promoter_bsize)
+# dev.off()
 
 ```
 
 
 ```{r, echo = FALSE}
 
-dat %>%
+enhancer_bfreq <- dat %>%
   filter(KS_pval > 0.01, 
          high_mu == TRUE, 
          sample %in% c("libFL010_E24_rg_pooledby2", 
@@ -265,21 +281,21 @@ dat %>%
                   "libFL010_E24_rg_pooledby2", 
                   "libFL013_E39_p309_pooledby4", 
                   "libFL014_E39_p319_pooledby6"))) %>%
-  ggplot(aes(x = log10(exp), y = log10(bfreq))) +
+  ggplot(aes(y = log10(exp), x = log10(bfreq))) +
 #  geom_point(aes(color = sample),  alpha = 0.25, na.rm = TRUE) +
   geom_smooth(
     aes(color = sample, fill = sample),
     method = "lm", formula = y ~ x, se = TRUE, na.rm = TRUE, alpha = 0.2
   ) +
-  #scale_color_manual(values = c("#97a6c4","#384860","#384860","#d8a6a6" , "#a00000", "#a00000")) +
-  #scale_fill_manual(values = c("#97a6c4","#384860","#384860", "#d8a6a6", "#a00000", "#a00000")) +
     scale_color_manual(values = c( "#F2994A", "#F7D154", "#B87400")) +
   scale_fill_manual(values = c( "#F2994A", "#F7D154", "#B87400")) +
-  coord_cartesian(xlim = c(-1.5, 1.25), ylim = c(-2, 0.5)) +
+  coord_cartesian(ylim = c(-1.5, 1.25), xlim = c(-2, 0.5)) +
   theme_classic(base_size = 15)+ theme(legend.position="none")+ 
   ggtitle("enhancer KS pval > 0.01 & high mu")
 
-dat %>%
+enhancer_bfreq
+
+enhancer_bsize <- dat %>%
   filter(KS_pval > 0.01, 
          high_mu == TRUE, 
          sample %in% c(
@@ -290,7 +306,7 @@ dat %>%
                   "libFL010_E24_rg_pooledby2", 
                   "libFL013_E39_p309_pooledby4", 
                   "libFL014_E39_p319_pooledby6"))) %>%
-  ggplot(aes(x = log10(exp), y = log10(bsize))) +
+  ggplot(aes(y = log10(exp), x = log10(bsize))) +
 #  geom_point(aes(color = sample),  alpha = 0.25, na.rm = TRUE) +
   geom_smooth(
     aes(color = sample, fill = sample),
@@ -302,6 +318,15 @@ dat %>%
   theme_classic(base_size = 15)+ theme(legend.position="none")+ 
   ggtitle("enhancer KS pval > 0.01 & high mu")
 
+enhancer_bsize
+
+# pdf("/groups/stark/lorbeer/Burst_params_DG/exp_v_bfreq_enhancers_5x5.pdf", width = 5, height = 5)
+# print(enhancer_bfreq)
+# dev.off()
+
+# pdf("/groups/stark/lorbeer/Burst_params_DG/exp_v_bsize_enhancers_5x5.pdf", width = 5, height = 5)
+# print(enhancer_bsize)
+# dev.off()
 
 ```
 
