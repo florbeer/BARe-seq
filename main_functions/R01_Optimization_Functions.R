@@ -50,6 +50,7 @@ FUN_NBmle <- function(x, method=c("Nelder-Mead", "L-BFGS-B", "BFGS"), init, ...)
 #Internally it computes the hessian matrices with a for loop, instead of parallelization with lapply (not sure why it's so different)
 
 FUN_HesM <- function(y, optN){
+  require(numDeriv)
   #Internal function for computing MLE of the 0-truncated negative binomial model
   fn <- function(z){
     mu <- z[1]
@@ -235,6 +236,8 @@ fn_rC3 <- Vectorize(function(size_exp, obs, mle_pars) {
 #samples: character vector with the names of the samples to evaluate
 #output: a list with 3 levels: samples, regulatory element (sequence) and roots. Roost contain two slots: mu_roots and r_roots for mu and r, respectively
 FUN_CI95 <- function(x, optLN, hesN, samples){
+  require(dplyr)
+  require(rootSolve)
   CIN <- list()
   err <- 2.5
   
@@ -356,62 +359,7 @@ FUN_CI95 <- function(x, optLN, hesN, samples){
   return(CIN)
 }
 
-####################
-#Data analysis functions
 
-#Getting reproducible values across two 
-#Version 1: comparing bursting size and bursting frequency
-#listdf: list of data frames with inferred parameters and other metrics
-#query and bkg: slots in the list to compare. The comparison is query slot vs bkg (background) slot
-#thr1: upper fold change threshold. FC values should be lower than this threshold to be considered reproducible
-#thr1: lower fold change threshold. FC values should be higher than this threshold to be considered reproducible
-FUN_repVal <- function(listdf, query, bkg, thr1, thr2){
-  y <- listdf[[query]] %>% as.data.frame()
-  y2 <- listdf[[bkg]] %>% as.data.frame()
-  k <- intersect( rownames(y),rownames(y2) )
-  
-  fc <- y[k,"bfreq"] / y2[k,"bfreq"]
-  #y$fc_freq <- fc
-  y$bfreq_repro <- FALSE
-  y[k,"bfreq_repro"] <- fc < thr1 & fc > thr2
-  
-  
-  fc2 <- y[k,"bsize"] / y2[k,"bsize"]
-  #y$fc_size <- fc2
-  y$bsize_repro <- FALSE
-  y[k,"bsize_repro"] <- fc2 < thr1 & fc2 > thr2
-  
-  return(y)
-}
-
-#Version 2: comparing mean expression (mu) and r parameter (equivalent to bursting frequency)
-#listdf: list of data frames with inferred parameters and other metrics
-#query and bkg: slots in the list to compare. The comparison is query slot vs bkg (background) slot
-#thr1: upper fold change threshold. FC values should be lower than this threshold to be considered reproducible
-#thr1: lower fold change threshold. FC values should be higher than this threshold to be considered reproducible
-FUN_repVal2 <- function(listdf, query, bkg, thr1, thr2){
-  y <- listdf[[query]] %>% as.data.frame()
-  y2 <- listdf[[bkg]] %>% as.data.frame()
-  k <- intersect( rownames(y),rownames(y2) )
-  
-  fc <- y[k,"exp"] / y2[k,"exp"]
-  #y$fc_freq <- fc
-  y$mu_pair <- FALSE
-  y[k,"mu_pair"] <- fc < thr1 & fc > thr2
-  
-  
-  fc2 <- y[k,"bfreq"] / y2[k,"bfreq"]
-  #y$fc_size <- fc2
-  y$r_pair <- FALSE
-  y[k,"r_pair"] <- fc2 < thr1 & fc2 > thr2
-  
-  y$pair_rep <- y$mu_pair & y$r_pair
-  
-  return(y)
-}
-
-
-####################
 #Functions for motif analyses
 #Wilcoxon test, copied and pasted from ../MultiomicsPBMCs/R26SideFunctions_2.R script
 
@@ -431,7 +379,7 @@ pairedWilcox <- function(x, alternative="two.sided", ...){
   return(wt)
 }
 
-#Transforming the numeric p values (contained into a numeric vector) into asterisk, for quick interpretation
+#Transforming the numeric p values (contained into a numeric vector) into asterisk, for easier interpretation
 num2star <- function(wt){
   wt2 <- wt
   wt2[wt < 0.001] <- "***"
@@ -443,14 +391,14 @@ num2star <- function(wt){
 
 # Function to analyze one parameter for all motifs
 #Inputs:
-#cp_data: "compiled data" data frame, whith all the parameters and motif content from different samples of interest
-#param_colm: character vector, corresponding to the parameter to be analysed, and equal to one of the colnames in the list of data frames
+#cp_data: "compiled data" data frame, with all the parameters and motif content from different samples of interest
+#param_col: character vector, corresponding to the parameter to be analysed, and equal to one of the colnames in the list of data frames
 #qr_motifs: "query motifs", character vector that includes all the motif names to be analyzed
 #qr_sample: "query sample", character with the colnames of the data frame to split into groups, it can be sample, sample2 (short names), condition, library, etc.
+#add_sample: character vector indicating additional colnames to include in the output data frame, together with "qr_sample".Default is NULL
 #param_name: character, indicating the parameter name to use for plotting afterwards
 
-#analyze_parameter <- function(param_col, param_name) {
-analyze_parameter <- function(cp_data, param_col, qr_motifs, qr_sample, param_name) {
+analyze_parameter <- function(cp_data, param_col, qr_motifs, qr_sample, add_sample=NULL, param_name) {
   MO <- qr_motifs
   
   aL <- lapply(MO, function(motif) {
@@ -461,14 +409,21 @@ analyze_parameter <- function(cp_data, param_col, qr_motifs, qr_sample, param_na
     cp_data$group <- paste(cp_data[[qr_sample]], cp_data[,motif], sep=":")
     cp_data$group <- factor(cp_data$group, levels=a3)
     
-    y2 <- split(cp_data[,param_col], cp_data$group)
+    y2 <- split(cp_data[[param_col]], cp_data$group)
     return(y2)
   })
   names(aL) <- MO
   
   # Create reference data frame for samples
-  f <- !duplicated(cp_data$sample)
-  df2 <- cp_data[f,c("sample", "sample2", "lib", "condition")]
+  #f <- !duplicated(cp_data$sample)
+  #df2 <- cp_data[f,c("sample", "sample2", "lib", "condition")]
+  if(is.null(add_sample)){
+    ac <- qr_sample
+  }
+  else{ ac <- c(qr_sample, add_sample) }
+  
+  ac2 <- split(cp_data[,ac], cp_data[[qr_sample]])
+  df2 <- sapply(ac2, function(y) apply(y,2,unique)) %>% t() %>% as.data.frame()
   
   # Statistical analysis for each motif
   ab <- lapply(aL, function(y) {
@@ -487,8 +442,8 @@ analyze_parameter <- function(cp_data, param_col, qr_motifs, qr_sample, param_na
     }
     log2_fc <- log2(fc)
     
-    df <- data.frame(fc=fc, log2_fc=log2_fc, wilcox_pval=y3, samples=df2$sample, samples2=df2$sample2, 
-                     library=df2$lib, condition=df2$condition)
+    df <- data.frame(fc=fc, log2_fc=log2_fc, wilcox_pval=y3)
+    df <- cbind(df, df2)
     return(df)
   })
   

@@ -6,7 +6,7 @@
 
 #setwd() #if required
 
-library(scModels)
+#library(scModels)
 library(dplyr)
 library(numDeriv)
 
@@ -263,10 +263,10 @@ samples <- names(dataP)
 libs <- rep.int(c("lib008", "lib016", "lib017"), c(6, 3, 3)) #option for the 4 sets of samples (E28 and E38)
 #libs <- c("lib008", "lib016", "lib017") %>% rep(., each=3) #option for the 3 sets of samples (only E38)
 
-#Add individual mu thresholds (in log2 scale, STAPseq data, E38 library): lib_008: -2.7; lib_016: -3.94, lib_017: -3.46
-#Threshold for E28 experiments (lib008): -3.3
-thres <- c(-3.3, -2.7, -3.94, -3.46) %>% rep(., each=3) #option for the 4 sets of samples (E28 and E38)
-#thres <- c(-2.7, -3.94, -3.46) %>% rep(., each=3) #option for the 3 sets of samples (only E38)
+#Add individual mu thresholds (in log2 scale, STAPseq data, E38 library): lib_008: -3.5; lib_016: -4.1, lib_017: -3.7
+#Threshold for E28 experiments (lib008): -3.5
+thres <- c(-3.5, -3.5, -4.1, -3.7) %>% rep(., each=3) #option for the 4 sets of samples (E28 and E38)
+#thres <- c(-3.5, -4.1, -3.7) %>% rep(., each=3) #option for the 3 sets of samples (only E38)
 
 for (i in 1:length(yP)){
   y <- yP[[i]]

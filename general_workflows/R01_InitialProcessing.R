@@ -7,7 +7,7 @@
 
 #setwd() #if required
 
-library(scModels)
+#library(scModels)
 library(dplyr)
 library(numDeriv)
 

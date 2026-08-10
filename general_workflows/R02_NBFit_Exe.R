@@ -3,7 +3,7 @@
 #Estimation of the negative binomial parameters in bash mode with RScript
 #setwd() #if required
 
-library(scModels)
+#library(scModels)
 library(dplyr)
 library(numDeriv)
 source("../main_functions/R01_Opitmization_Functions.R") #adapt the path if required
