@@ -23,6 +23,7 @@ require(readxl)
 require(ggrepel)
 
 setwd("/groups/stark/lorbeer/Burst_params_DG/STARR_March2025_pools/")
+out_dir <- "/groups/stark/lorbeer/Burst_params_DG/STARR_March2025_pools/Fig4_enhancer/"
 
 ```
 
@@ -119,6 +120,71 @@ na_block_for_motifs <- function(motifs, outcome, model_label, n_used = NA_intege
     FoldChange = NA_real_
   )
 }
+
+```
+
+```{r, echo = FALSE}
+df <- param_list$libFL010_E24_rg_pooledby2
+
+plot_df <- df %>%
+  as.data.frame() %>%
+  pivot_longer(
+    cols = ends_with("_clip"),
+    names_to = "clipped_motif",
+    values_to = "n_clipped_instances"
+  ) %>%
+  pivot_longer(
+    cols = c(bsize, bfreq, exp),
+    names_to = "parameter",
+    values_to = "value"
+  ) %>%
+  mutate(
+    clipped_motif = sub("_clip$", "", clipped_motif),
+    n_clipped_instances = factor(n_clipped_instances)
+  )
+
+desired_order <- c("ETS", "GATA", "AP1", "SREBP", "Trl", "twist", "Ohler6", "Ohler7", "Ohler1", "Dref") 
+plot_df$clipped_motif <- factor(plot_df$clipped_motif, levels = desired_order)
+
+plot_df <- plot_df %>%
+  mutate(
+    clipped_motif = factor(clipped_motif, levels = desired_order),
+    parameter = factor(parameter, levels = c("bsize", "bfreq", "exp"))
+  )
+
+motif_cols <- c(
+  "ETS" = "darkorange",
+  "GATA" = "red",
+  "AP1" = "orange", 
+  "SREBP" = "darkred", 
+  "Trl" = "pink",
+  "twist" = "pink3",
+  "Ohler6" = "lightblue",
+  "Ohler7" = "dodgerblue1", 
+  "Ohler1" = "darkblue",
+  "Dref" = "blue"
+)
+
+p_motifclip <- ggplot(
+  plot_df,
+  aes(x = n_clipped_instances, y = log10(value))
+) +
+  geom_boxplot(outlier.shape = NA) +
+  facet_grid(clipped_motif ~ parameter, scales = "free_y") +
+  labs(
+    x = "Number of motif instances",
+    y = "parameter (log10)",
+    title = "bsize, bfreq, and exp by motif instance"
+  ) +
+  theme_classic(base_size = 15) +
+  theme(
+    strip.background = element_rect(fill = "grey90"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# pdf(paste0(out_dir,"boxplot_motifs_enhancer_dscp.pdf"), width = 3.5, height =10)
+# print(p_motifclip)
+# dev.off()
 
 ```
 
@@ -427,9 +493,9 @@ multivariate, univariate etc
 # Define outside the function
 min_occurrence <- 5
 
-motifs_order <- motifs_10
+motifs_order <- rev(motifs_10)
 pooled_samples
-all_samples <- sample_names
+all_samples <- sample_names[c(2,3,4,5,7,8)]
 
 samples_order <- pooled_samples
 
@@ -449,6 +515,13 @@ q_univ <- make_heatmap_model(results_both, "motifs_only",
 q_multiv
 q_univ
 
+pdf(paste0(out_dir,"pooled_samples_multivariate.pdf"), width = 10, height = 5)
+print(q_multiv)
+dev.off()
+pdf(paste0(out_dir,"pooled_samples_univariate.pdf"), width = 10, height = 5)
+print(q_univ)
+dev.off()
+
 #all samples for supplement
 p_multiv <- make_heatmap_model(results_both, "motifs_only",
                                motifs_order = motifs_order,
@@ -464,6 +537,13 @@ p_univ <- make_heatmap_model(results_both, "motifs_only",
 
 p_multiv
 p_univ
+
+pdf(paste0(out_dir,"all_samples_multivariate.pdf"), width = 10, height = 5)
+print(p_multiv)
+dev.off()
+pdf(paste0(out_dir,"all_samples_univariate.pdf"), width = 10, height = 5)
+print(p_univ)
+dev.off()
 
 
 ```
@@ -772,6 +852,192 @@ print(p)
 # pdf("meta_pooled_analysis_estimates_STARR.pdf", width = 6, height = 5)
 # print(p)
 # dev.off()
+
+
+
+```
+
+
+#for supplement correlations 
+
+```{r, echo = FALSE}
+
+# List of filtered datasets and their labels
+data_list <- list(
+  "unfiltered" = STAP_annotated ,
+  "KS_pval_0.01" = STAP_annotated %>% filter(KS_pval > 0.01 ),
+  "mu_and_KSpval" = STAP_annotated %>% filter(KS_pval > 0.01 & high_mu == TRUE )
+)
+
+make_correlation_heatmap <- function(dt, feature, dataset_name, sample_reps = NULL) {
+  dt <- as.data.table(dt)
+  
+  if (!"sample" %in% names(dt)) stop("No 'sample' column found in data")
+  
+  # Just pull Seq_ID, sample, and the numerical feature
+  wide_dt <- dt[, .(
+    seq_ID,
+    sample_label = sample, 
+    value = as.numeric(get(feature))
+  )]
+  
+  # FILTER STEP: Keep only rows where 'sample_label' is in sample_reps
+  if (!is.null(sample_reps)) {
+    wide_dt <- wide_dt[sample_label %in% sample_reps]
+  }
+  
+  # Check if we still have data after filtering
+  if (nrow(wide_dt) == 0) {
+    warning(paste("No data left after filtering for sample_reps in dataset:", dataset_name))
+    return(NULL)
+  }
+  
+  # Reshape to wide format using the sample names
+  wide_dt <- dcast(wide_dt, seq_ID ~ sample_label, value.var = "value")
+  
+  mat <- as.matrix(wide_dt[, -1, with = FALSE])
+  storage.mode(mat) <- "numeric"
+  mat[mat <= 0] <- NA
+  mat <- log10(mat)
+  
+  mat <- mat[, colSums(is.finite(mat)) >= 2, drop = FALSE]
+  if (ncol(mat) < 2) return(NULL)
+  
+  cormat <- cor(mat, use = "pairwise.complete.obs", method = "pearson")
+  cormat_tbl <- as.data.frame(as.table(cormat))
+  colnames(cormat_tbl) <- c("Sample1", "Sample2", "Correlation")
+  
+  ggplot(cormat_tbl, aes(Sample1, Sample2, fill = Correlation)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(
+      low = "#4575b4", mid = "white", high = "#d73027",
+      midpoint = 0.5, limits = c(0, 1), na.value = "grey90"
+    ) +
+    geom_text(aes(label = ifelse(is.na(Correlation), "NA", sprintf("%.2f", Correlation))), size = 3) +
+    labs(title = paste0("Dataset: ", dataset_name, " | Feature: ", feature), x = "", y = "") +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          panel.grid = element_blank())
+}
+
+```
+
+```{r}
+features <- c("exp", "bfreq", "bsize")
+all_heatmaps <- list()
+
+# Define your vector of samples to include
+# e.g., sample_reps <- c("libA_exp1_rep1", "libB_exp1_rep2", ...) 
+# Make sure this matches the formatting paste(sample, experiment, rep, sep = "_")
+
+for (dname in names(data_list)) {
+  cat("Processing dataset:", dname, "\n")
+  dt <- data_list[[dname]]
+  
+  for (f in features) {
+    # Generate the plot, passing the sample_reps vector
+    p <- make_correlation_heatmap(dt, f, dname, sample_reps = sample_reps)
+    
+    if (!is.null(p)) {
+      heatmap_name <- paste(dname, f, sep = "_")
+      all_heatmaps[[heatmap_name]] <- p
+      
+      # Save the plot automatically
+      file_path <- paste0(out_dir, "Heatmap_", heatmap_name, ".pdf")
+      ggsave(filename = file_path, plot = p, width = 5, height = 5, units = "in")
+    }
+  }
+}
+
+# Print them locally/to the console 
+for (nm in names(all_heatmaps)) {
+  print(all_heatmaps[[nm]])
+}
+
+```
+
+
+```{r, echo = FALSE }
+require(vroom)
+require(data.table)
+require(ggplot2)
+require(gridExtra)
+require(pheatmap)
+require(stringr)
+require(dplyr)
+
+test2 <- read.delim("/groups/stark/lorbeer/STARR-TWIST/STARR_TWIST_metadata_v2_Ohlerincluded.txt")
+test1 <- read.delim("/groups/stark/lorbeer/STARR-TWIST/STARR_TWIST_metadata_v2.txt")
+test3 <- readRDS("/groups/stark/lorbeer/STARR-TWIST/Oligos_with_motif_counts_2022code_subsettedmotifs_Ohlerincluded.rds")
+enhancers <- test3[which(test3$`oligos_motif_counts$ID` %in% test1$ID),]
+colnames(enhancers) <- c("seq_ID", "ETS", "SREBP", "Trl", "AP1", "GATA", "twist", "Ohler6", "Ohler8", "Dref", "Ohler7", "Ohler1")
+
+```
+
+
+```{r, echo=FALSE}
+main_mots <- c("ETS", "SREBP", "Trl", "AP1", "GATA", "twist", "Ohler6", "Dref", "Ohler7", "Ohler1")
+TF_motifs <- main_mots
+names(TF_motifs) <- main_mots
+
+enhancers$main_mots <- ""
+for (x in names(TF_motifs)){
+  column <- enhancers[[x]]  # Use [[ ]] for column extraction
+  enhancers$main_mots <- paste0(enhancers$main_mots, ifelse(column == 0, "", paste0(x, "-")))
+}
+
+require(ggupset)
+#enhancers_selected$categories_list <- lapply(strsplit(promoter_selected$main_mots, "-"), unlist(unlist))
+#prom_selected_test <- cbind(lapply(strsplit(enhancers_selected$main_mots, "-"), unlist(unlist)), enhancers_selected)
+#test2 <- cbind(promoter_selected, lapply(prom_selected_test$categories_list, unlist))
+
+enhancers$V2 <- lapply(strsplit(enhancers$main_mots, "-"), unlist(unlist))
+
+
+```
+
+
+```{r, echo = FALSE}
+#count how many lines have which motif
+#https://r-graph-gallery.com/128-ring-or-donut-plot.html
+#https://rforpoliticalscience.com/2020/07/26/make-wes-anderson-themed-graphs-with-wesanderson-package-in-r/ 
+TF_freq <- as.data.frame(table(unlist(lapply(strsplit(enhancers$main_mots, "-"), unlist(unlist)))))
+
+# 2. Set the desired order natively as a factor
+desired_order <- c("ETS", "GATA", "AP1", "SREBP", "Trl", "twist", "Ohler6", "Ohler7", "Ohler1", "Dref") 
+TF_freq$Var1 <- factor(TF_freq$Var1, levels = desired_order)
+
+# 3. Colors (with Ohler7!)
+motif_cols <- c(
+  "ETS" = "darkorange",
+  "GATA" = "red",
+  "AP1" = "orange", 
+  "SREBP" = "darkred", 
+  "Trl" = "pink",
+  "twist" = "pink3",
+  "Ohler6" = "lightblue",
+  "Ohler7" = "dodgerblue1", 
+  "Ohler1" = "darkblue",
+  "Dref" = "blue"
+)
+
+# 4. Plot using geom_col() instead of geom_rect()
+motif_plot <- ggplot(TF_freq, aes(x = 3, y = Freq, fill = Var1)) +
+  geom_col() +                     # geom_col automatically stacks based on factor order!
+  coord_polar(theta = "y") +       # Wrap the stacked bar into a circle
+  xlim(c(1.5, 3.5)) +              # The xlim controls how "thick" the donut ring is
+  scale_fill_manual(values = motif_cols) +
+  theme_void()
+
+pdf(paste0(out_dir,"libFL010_enhancer_motif_content.pdf"), width = 6, height = 5)
+print(motif_plot)
+dev.off()
+
+motif_plot
+
+
+print(TF_freq)
+
 
 
 

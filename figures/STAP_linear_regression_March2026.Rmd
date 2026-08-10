@@ -29,10 +29,12 @@ require(readxl)
 2) sample-specific expression thresholds from mu_thresholds_v2_Reyna.xlsx 
 
 ```{r}
+
+out_dir <- "/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/Fig2_promoter_motifs/"
 #load data 
 param <- fread("/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/STAP_data_annotated_log2FC.txt")
 sample_names <- unique(as.factor(param$sample))
-sample_names <- sample_names[1:12]
+sample_names <- sample_names[c(1:3,7:12)]
 
 mu_thresholds <- read_xlsx("/groups/stark/lorbeer/Burst_params_DG/mu_thresholds_v2_Reyna.xlsx")
 param <- merge(param, mu_thresholds, by = c("sample", "experiment", "library"), all.x = TRUE)
@@ -272,7 +274,7 @@ motifs <- c("Ohler1", "DRE", "TATAbox", "INR", "Ebox", "Ohler6", "Ohler7",
 
 #motifs_10 <- c("DPE", "INR", "Ebox", "Ohler6", "DRE", "MTE", "Ohler7", "Ohler1", "TATAbox", "TCT")
 
-motifs_10 <- c("DPE", "INR", "Ebox", "Ohler6", "DRE", "Ohler7", "Ohler1", "TATAbox")
+motifs_10 <- c("DPE", "INR", "Ebox", "Ohler6", "Ohler1", "TATAbox")
 print(motifs_10)
 
 outcomes <- c("bsize", "bfreq", "exp")
@@ -285,13 +287,13 @@ results_both <- dplyr::bind_rows(
 head(results_both)
 
 #save 
-write.table(
-  results_both,
-  "/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/linear_regression_results_STAP_KS_mu_20260330.txt",
-  quote = FALSE,
-  row.names = FALSE,
-  sep = "\t"
-)
+# write.table(
+#   results_both,
+#   "/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/Fig2_promoter_motifs/linear_regression_results_STAP_KS_mu_20260330.txt",
+#   quote = FALSE,
+#   row.names = FALSE,
+#   sep = "\t"
+# )
 
 ```
 
@@ -411,11 +413,11 @@ q_multiv
 q_univ
 
 # Optional manual PDF export:
-# pdf("heatmap_multivariate_pooled.pdf", width = 10, height = 5)
+# pdf(paste0(out_dir,"heatmap_multivariate_pooled.pdf"), width = 10, height = 5)
 # print(q_multiv)
 # dev.off()
-
-# pdf("heatmap_univariate_pooled.pdf", width = 10, height = 5)
+# 
+# pdf(paste0(out_dir,"heatmap_univariate_pooled.pdf"), width = 10, height = 5)
 # print(q_univ)
 # dev.off()
 
@@ -445,11 +447,11 @@ p_multiv
 p_univ
 
 # Optional manual PDF export:
-# pdf("heatmap_multivariate_all_samples.pdf", width = 14, height = 5)
+# pdf(paste0(out_dir,"heatmap_multivariate_all_samples.pdf"), width = 14, height = 5)
 # print(p_multiv)
 # dev.off()
-
-# pdf("heatmap_univariate_all_samples.pdf", width = 14, height = 5)
+# 
+# pdf(paste0(out_dir, "heatmap_univariate_all_samples.pdf"), width = 14, height = 5)
 # print(p_univ)
 # dev.off()
 
@@ -594,13 +596,13 @@ head(all_table)
 res_all$plot
 
 # Optional manual PDF export:
-# pdf("log2FC_heatmap_pooled.pdf", width = 12, height = 5)
-# print(res_pooled$plot)
-# dev.off()
+pdf(paste0(out_dir,"log2FC_heatmap_pooled.pdf"), width = 12, height = 5)
+print(res_pooled$plot)
+dev.off()
 
-# pdf("log2FC_heatmap_all_samples.pdf", width = 12, height = 5)
-# print(res_all$plot)
-# dev.off()
+pdf(paste0(out_dir,"log2FC_heatmap_all_samples.pdf"), width = 12, height = 5)
+print(res_all$plot)
+dev.off()
 
 ```
 
@@ -640,7 +642,7 @@ meta_input <- results_both %>%
 
 combos <- meta_input %>%
   distinct(sample_name, Motif, Outcome) %>%
-  count(Motif, Outcome, name = "k") %>%
+  dplyr::count(Motif, Outcome, name = "k") %>%
   filter(k >= min_k)
 
 pooled_list <- vector("list", nrow(combos))
@@ -808,11 +810,732 @@ if (requireNamespace("ggrepel", quietly = TRUE)) {
 p_meta
 
 # Optional manual PDF export:
-# pdf("meta_pooled_analysis_estimates_KS_mu.pdf", width = 6, height = 5)
+# pdf(paste0(out_dir,"meta_pooled_analysis_estimates_KS_mu.pdf"), width = 6, height = 5)
 # print(p_meta)
 # dev.off()
 
 
 ```
+
+```{r, echo=FALSE}
+
+TF_motifs <- motifs_10
+names(TF_motifs) <- motifs_10
+
+new_STAP <- fread("/groups/stark/lorbeer/STAP-TWIST/Franzi_STAP_TWIST_metadata-v2.txt")
+
+new_STAP$main_mots <- ""
+for (x in names(TF_motifs)){
+  column <- new_STAP[[x]]  # Use [[ ]] for column extraction
+  new_STAP$main_mots <- paste0(new_STAP$main_mots, ifelse(column == 0, "", paste0(x, "-")))
+}
+
+new_STAP$V2 <- lapply(strsplit(new_STAP$main_mots, "-"), unlist(unlist))
+
+
+```
+
+
+```{r, echo = FALSE}
+#count how many lines have which motif
+#https://r-graph-gallery.com/128-ring-or-donut-plot.html
+#https://rforpoliticalscience.com/2020/07/26/make-wes-anderson-themed-graphs-with-wesanderson-package-in-r/ 
+TF_freq <- as.data.frame(table(unlist(lapply(strsplit(new_STAP$main_mots, "-"), unlist(unlist)))))
+
+# 2. Set the desired order natively as a factor
+desired_order <- rev(motifs_10)
+TF_freq$Var1 <- factor(TF_freq$Var1, levels = desired_order)
+
+# 3. Colors (with Ohler7!)
+motif_cols <- c(
+  "TATAbox" = "darkcyan",
+  "DPE" = "goldenrod2",
+  "Ebox" = "coral3", 
+  "INR" = "orchid4", 
+  "Ohler6" = "lightblue",
+  "Ohler1" = "darkblue"
+)
+
+# 4. Plot using geom_col() instead of geom_rect()
+motif_plot <- ggplot(TF_freq, aes(x = 3, y = Freq, fill = Var1)) +
+  geom_col() +                     # geom_col automatically stacks based on factor order!
+  coord_polar(theta = "y") +       # Wrap the stacked bar into a circle
+  xlim(c(1.5, 3.5)) +              # The xlim controls how "thick" the donut ring is
+  scale_fill_manual(values = motif_cols) +
+  theme_void()
+
+motif_plot
+
+pdf(paste0(out_dir,"libFL008_promoter_motif_content.pdf"), width = 6, height = 5)
+print(motif_plot)
+dev.off()
+
+
+
+
+print(TF_freq)
+write.table(TF_freq, paste0(out_dir, "libFL008_promoter_motif_count.txt"), sep = "\t", quote = FALSE, col.names = FALSE)
+
+#require(ggupset)
+library(ComplexUpset)
+library(dplyr)
+
+# 1. Define the subset of your columns that are the 0/1 motif indicators
+motif_cols <- motifs_10
+
+# 2. Convert those specific columns to logical (TRUE/FALSE) 
+# ComplexUpset works best when the sets are logicals!
+new_STAP_upset <- new_STAP %>%
+  mutate(across(all_of(motif_cols), ~ as.logical(.)))
+
+# 3. Create the plot
+up <- upset(
+  new_STAP_upset, 
+  intersect = motif_cols, 
+  name = "Motif combinations",
+  min_size = 2, # Only show bars with at least 2 observations
+  width_ratio = 0.15
+)
+
+up
+
+pdf(paste0(out_dir,"libFL008_promoter_motif_content_upset.pdf"), width = 6, height = 5)
+print(up)
+dev.off()
+
+```
+
+
+
+
+```{r, echo = FALSE}
+
+scatter.plots <- list()
+
+dat.sub <- param %>% filter(KS_pval > 0.01  & high_mu == TRUE & !is.na(TATAbox) & experiment == "E28" & rep == "pooledby2") %>% mutate(
+    promoter_type = case_when(
+      TATAbox == 1 & DPE == 1 ~ "both",
+      TATAbox == 1 & DPE == 0 ~ "TATAbox",
+      TATAbox == 0 & DPE == 1 ~ "DPE",
+      TATAbox == 0 & DPE == 0 ~ "none"
+    )
+  ) %>% filter(promoter_type != "both")
+
+dat.sub$promoter_type <- factor(dat.sub$promoter_type, levels = c("TATAbox", "DPE", "both", "none"))
+
+# Define the individual comparisons you want to make
+my_comparisons <- list(c("TATAbox", "DPE"), c("TATAbox", "none"), c("DPE", "none"))
+
+# --- Burst Size Plot ---
+p_val1 <- summary(aov(log10(bsize) ~ promoter_type, dat.sub))[[1]][["Pr(>F)"]][1]
+scatter.plots[["burst size"]] <- dat.sub %>% 
+  ggplot(aes(x = promoter_type, y = log10(bsize), color = promoter_type)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  scale_color_manual(values = c("darkcyan", "goldenrod2", "gray32", "gray12")) + 
+  facet_wrap(~library) + 
+  ggtitle("burst size", subtitle = paste0("ANOVA p = ", format(p_val1, scientific = TRUE, digits = 3))) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none") +
+  # This single line adds the individual comparison brackets and p-values
+  stat_compare_means(comparisons = my_comparisons, method = "t.test", label = "p.signif") 
+  # Use label = "p.format" if you want numbers instead of asterisks (***)
+
+# --- Burst Frequency Plot ---
+p_val2 <- summary(aov(log10(bfreq) ~ promoter_type, dat.sub))[[1]][["Pr(>F)"]][1]
+scatter.plots[["burst frequency"]] <- dat.sub %>% 
+  ggplot(aes(x = promoter_type, y = log10(bfreq), color = promoter_type)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  scale_color_manual(values = c("darkcyan", "goldenrod2", "gray32", "gray12")) + 
+  facet_wrap(~library) + 
+  ggtitle("burst frequency", subtitle = paste0("ANOVA p = ", format(p_val2, scientific = TRUE, digits = 3))) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none") +
+  stat_compare_means(comparisons = my_comparisons, method = "t.test", label = "p.signif")
+
+# --- Exp Plot ---
+p_val3 <- summary(aov(log10(exp) ~ promoter_type, dat.sub))[[1]][["Pr(>F)"]][1]
+scatter.plots[["exp"]] <- dat.sub %>% 
+  ggplot(aes(x = promoter_type, y = log10(exp), color = promoter_type)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  scale_color_manual(values = c("darkcyan", "goldenrod2", "gray32", "gray12")) + 
+  facet_wrap(~library) + 
+  ggtitle("exp", subtitle = paste0("ANOVA p = ", format(p_val3, scientific = TRUE, digits = 3))) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none") +
+  stat_compare_means(comparisons = my_comparisons, method = "t.test", label = "p.signif")
+
+wrap_plots(scatter.plots)
+#grid.arrange(grobs = scatter.plots, ncol = 3)
+
+pdf(paste0(out_dir,"DPE_TATA_comparison_E28.pdf"), width = 7, height = 5)
+print(wrap_plots(scatter.plots))
+dev.off()
+
+```
+```{r, echo = FALSE}
+
+#setwd("/groups/stark/vloubiere/projects/Franzi_bursting/")
+devtools::load_all("/groups/stark/vloubiere/vlite/")
+require(TFBSTools)
+library(Biostrings)
+# Import motifs
+pwm <- readRDS("/groups/stark/vloubiere/motifs_db/CP_motifs_PWM.rds")
+motif_names <- sapply(pwm$Pwms_perc, TFBSTools::name)
+
+# 1. Extract the raw numeric matrices explicitly
+raw_percentage_matrices <- lapply(pwm$Pwms_perc, function(x) {
+  # This safely extracts the internal numeric matrix from the S4 object
+  TFBSTools::Matrix(x) 
+})
+
+# 2. Convert percentages to "counts" (e.g., multiply by 100) and round to integers
+# (motifmatchr and TFBSTools prefer integer counts for base matrices)
+count_matrices <- lapply(raw_percentage_matrices, function(x) round(x * 100))
+
+# 3. Create a clean PFMatrixList (Position Frequency Matrix)
+pfm_list <- do.call(PFMatrixList, lapply(seq_along(count_matrices), function(i) {
+  # Try to get the original name, or make a new one
+  orig_names <- names(pwm$Pwms_perc)
+  m_name <- if (!is.null(orig_names)) orig_names[i] else paste0("Motif_", i)
+  
+  PFMatrix(name = m_name, profileMatrix = count_matrices[[i]])
+}))
+# 4. Convert to a proper PWMatrixList (Log-odds ratio)
+# type = "log2probratio" is the standard log-odds format required by motifmatchr
+fixed_pwms <- toPWM(pfm_list, type = "log2probratio", pseudocounts = 0.8)
+
+# 1. Import sequences and store them into a DNAStringSet
+seq <- fread("/groups/stark/lorbeer/STAP-TWIST/Franzi_STAP_STARR_TWIST_seqonly-v2.tsv")[grep("STAP", ID_TWIST)]
+seqV <- substr(seq$Sequence_with_linker, 59, 59+132)
+names(seqV) <- seq$ID_TWIST
+
+dna_seqs <- DNAStringSet(seqV)
+
+# 3. Convert to log odds
+fixed_pwms <- toPWM(pfm_list, type = "log2probratio", pseudocounts = 0.8)
+
+# --- 4. Unpack the GRangesList manually into plain data.tables ---
+res_list <- lapply(seq_along(motif_hits), function(i) {
+  hits <- motif_hits[[i]] 
+  if (length(hits) > 0) {
+    dt <- as.data.table(as.data.frame(hits))
+    dt[, motif := motif_names[i]]
+    return(dt)
+  }
+})
+
+bed <- rbindlist(res_list, fill = TRUE)
+
+# 3. Rename sequence ID column 
+# If 'group' exists, it is the exact numeric index of the sequence.
+bed[, seqlvls := names(dna_seqs)[group]]
+bed[, seqlvls := gsub("_STAP-v2$", "", seqlvls)]
+
+# 4. Format and Extract 
+if ("strand" %in% names(bed)) bed <- bed[strand == "+"]
+
+# Calculate the midpoint (creates the 'pos' column)
+bed[, pos := (start + end) / 2]
+
+# Clean up the sequence names string
+bed[, seqlvls := gsub("_STAP-v2$", "", as.character(seqlvls))]
+
+# Take max score per sequence/motif
+bed <- bed[, .SD[which.max(score)], .(seqlvls, motif)]
+
+# Expand out into your final matrices!
+score_mat <- dcast(bed, seqlvls ~ motif, value.var = "score", fill = 0)
+pos_mat   <- dcast(bed, seqlvls ~ motif, value.var = "pos")
+
+head(score_mat)
+
+
+# Sanit checks compare with Vanja  
+# old <- fread("/groups/stark/lorbeer/STAP-TWIST/Franzi_STAP_TWIST_metadata-v2.txt")
+# cmb <- merge(score_mat, old[, .(seqlvls= oligo_id, TATA.old= TATAbox, INR.old= INR)], by= "seqlvls", all.x= T, sort= F)
+
+# pdf(paste0(out_dir,"define_CP_motif_center.pdf"), width = 4, height = 15)
+# vl_par(mfrow= c(19, 1),
+#        mai= c(.2, .9, .3, .9))
+# for(motif in names(pos_mat)[-1]) {
+#   # Compute density
+#   dens <- density(pos_mat[[motif]][score_mat[[motif]]>0])
+#   # Max position
+#   c.pos <- round(dens$x[which.max(dens$y)])
+#   ext <- ifelse(motif %in% c("TATAbox"), 5, 10)
+#   # plot density
+#   plot(dens, xlim= c(0, 133), main= paste0(motif, " n= ", sum(score_mat[[motif]]>0), "/", nrow(score_mat), " (", c.pos, "+/-", ext, ")"))
+#   # Add lines around max
+#   abline(v= c.pos+c(-ext, ext))
+# }
+# dev.off()
+
+# Import Franzie's bursting params and add them to the score table
+param_28 <- param[sample=="libFL008_E28_RT2_pooledby2" & (high_mu & KS_pval > 0.01)]
+sub.score <- merge(score_mat, param_28[, .(seqlvls= seq_ID, bfreq, bsize, log2FoldChange)], by= "seqlvls", sort= F)
+sub.pos <- pos_mat[sub.score$seqlvls, on= "seqlvls"]
+stopifnot(identical(sub.score$seqlvls, sub.pos$seqlvls))
+
+# 2. Open PDF
+pdf(paste0(out_dir, "motif_score_vs_size_freq.pdf"), height = 3.5, width = 7.5)
+
+for(motif in c("TATAbox", "DPE")) {
+  
+  # Check at position
+  pos.ok <- if(motif=="TATAbox") {
+    between(sub.pos[[motif]], 35, 45)
+  } else if(motif=="DPE") {
+    between(sub.pos[[motif]], 80, 100)
+  } else {
+    stop("Please define expected position for motif")
+  }
+  
+  # Create a clean data.frame for ggplot
+  dt_plot <- data.table(
+    score = sub.score[[motif]],
+    freq  = log10(sub.score$bfreq),
+    size  = log10(sub.score$bsize),
+    pos_ok = factor(pos.ok, levels = c("FALSE", "TRUE")) 
+  )
+  
+  # --- FREQUENCY PLOT & STATS ---
+  cor_freq <- cor.test(dt_plot$score, dt_plot$freq, method = "pearson")
+  anno_freq <- sprintf("PCC = %.2f\np-val = %.2e", cor_freq$estimate, cor_freq$p.value)
+  
+  p_freq <- ggplot(dt_plot, aes(x = score, y = freq)) +
+    geom_point(aes(color = pos_ok), alpha = 0.3, size = 1) +
+    geom_smooth(method = "lm", color = "blue", se = FALSE, linewidth = 0.8) +
+    scale_color_manual(values = c("TRUE" = "red", "FALSE" = "black")) +
+    annotate("text", x = -Inf, y = -Inf, label = anno_freq, 
+             vjust = -0.5, hjust = -0.1, fontface = "bold", size = 3.5) +
+    labs(x = "Motif score", y = "Burst Frequency (log10)", title = motif) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+  
+  # --- SIZE PLOT & STATS ---
+  cor_size <- cor.test(dt_plot$score, dt_plot$size, method = "pearson")
+  anno_size <- sprintf("PCC = %.2f\np-val = %.2e", cor_size$estimate, cor_size$p.value)
+  
+  p_size <- ggplot(dt_plot, aes(x = score, y = size)) +
+    geom_point(aes(color = pos_ok), alpha = 0.3, size = 1) +
+    geom_smooth(method = "lm", color = "blue", se = FALSE, linewidth = 0.8) +
+    scale_color_manual(values = c("TRUE" = "red", "FALSE" = "black")) +
+    annotate("text", x = -Inf, y = -Inf, label = anno_size, 
+             vjust = -0.5, hjust = -0.1, fontface = "bold", size = 3.5) +
+    labs(x = "Motif score", y = "Burst Size (log10)", title = motif) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+  
+  # Print them side-by-side using grid.arrange
+  grid.arrange(p_freq, p_size, ncol = 2)
+}
+
+dev.off()
+
+
+pdf(paste0(out_dir,"motif_score_vs_size_freq_pos_ok.pdf"), height = 3.5, width = 7.5)
+for(motif in c("TATAbox", "DPE")) {
+  
+  # Check at position
+  pos.ok <- if(motif == "TATAbox") {
+    between(sub.pos[[motif]], 35, 45)
+  } else if(motif == "DPE") {
+    between(sub.pos[[motif]], 80, 100)
+  } else {
+    stop("Please define expected position for motif")
+  }
+  
+  # Create a clean data.frame and IMMEDIATELY filter for pos.ok == TRUE
+  dt_plot <- data.table(
+    score = sub.score[[motif]],
+    freq  = log10(sub.score$bfreq),
+    size  = log10(sub.score$bsize),
+    pos_ok = pos.ok
+  )[pos_ok == TRUE] # This strips away all non-positioned hits
+  
+  # Set the requested motif color
+  pt_color <- if (motif == "TATAbox") "darkcyan" else "goldenrod2"
+  
+  # --- FREQUENCY PLOT & STATS ---
+  cor_freq <- cor.test(dt_plot$score, dt_plot$freq, method = "pearson")
+  anno_freq <- sprintf("PCC = %.2f\np-val = %.2e", cor_freq$estimate, cor_freq$p.value)
+  
+  p_freq <- ggplot(dt_plot, aes(x = score, y = freq)) +
+    geom_point(color = pt_color, alpha = 0.5, size = 2) +
+    geom_smooth(method = "lm", color = "black", se = FALSE, linewidth = 0.8) +
+    annotate("text", x = -Inf, y = -Inf, label = anno_freq, 
+             vjust = -0.5, hjust = -0.1, fontface = "bold", size = 3.5) +
+    labs(x = "Motif score", y = "Burst frequency (log10)", title = motif) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+  
+  # --- SIZE PLOT & STATS ---
+  cor_size <- cor.test(dt_plot$score, dt_plot$size, method = "pearson")
+  anno_size <- sprintf("PCC = %.2f\np-val = %.2e", cor_size$estimate, cor_size$p.value)
+  
+  p_size <- ggplot(dt_plot, aes(x = score, y = size)) +
+    geom_point(color = pt_color, alpha = 0.5, size = 2) +
+    geom_smooth(method = "lm", color = "black", se = FALSE, linewidth = 0.8) +
+    annotate("text", x = -Inf, y = -Inf, label = anno_size, 
+             vjust = -0.5, hjust = -0.1, fontface = "bold", size = 3.5) +
+    labs(x = "Motif score", y = "Burst size (log10)", title = motif) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+  
+  # Print them side-by-side
+  grid.arrange(p_freq, p_size, ncol = 2)
+}
+
+dev.off()
+
+
+
+```
+
+
+```{r, echo = FALSE}
+# Packages
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+
+
+# Prepare data (same as you had)
+STAP_annotated <- dat.sub %>% filter(between(exp,0.1,5)) %>%
+  mutate(
+    expression_range = ifelse(between(exp, 1.5, 5), "high",
+                       ifelse(between(exp, 0.3, 1.5), "medium", "low")),
+    expression_range = factor(expression_range, levels = c("low", "medium", "high"))
+  )
+
+# Filter once for reuse
+df_base <- STAP_annotated %>%
+  mutate(TATAbox = as.factor(TATAbox))
+
+# 1) bsize plot
+p_bsize <- ggplot(df_base, aes(x = TATAbox, y = log10(bsize))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = TATAbox), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "darkcyan")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 2) bfreq plot
+p_bfreq <- ggplot(df_base, aes(x = TATAbox, y = log10(bfreq))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = TATAbox), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "darkcyan")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 3) exp plot
+p_exp <- ggplot(df_base, aes(x = TATAbox, y = log10(exp))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = TATAbox), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample~expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "darkcyan")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3)
+#ggsave(paste0(out_dir,"TATA_boxplots_expressionbins_E28.pdf"), plot = grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3), width = 8, height = 3, units = "in")
+
+```
+
+
+```{r, echo = FALSE}
+
+# DPE
+# Filter once for reuse
+df_base <- STAP_annotated %>%
+  mutate(DPE = as.factor(DPE))
+
+# 1) bsize plot
+p_bsize <- ggplot(df_base, aes(x = DPE, y = log10(bsize))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = DPE), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "goldenrod2")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 2) bfreq plot
+p_bfreq <- ggplot(df_base, aes(x = DPE, y = log10(bfreq))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = DPE), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "goldenrod2")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 3) exp plot
+p_exp <- ggplot(df_base, aes(x = DPE, y = log10(exp))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = DPE), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample~expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "goldenrod2")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+
+grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3)
+#ggsave(paste0(out_dir,"DPE_boxplots_expressionbins_E28.pdf"), plot = grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3), width = 8, height = 3, units = "in")
+
+```
+
+
+````{r, echo = FALSE}
+
+# INR
+# Filter once for reuse
+df_base <- STAP_annotated %>%
+  mutate(INR = as.factor(INR))
+
+# 1) bsize plot
+p_bsize <- ggplot(df_base, aes(x = INR, y = log10(bsize))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = INR), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "orchid4")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 2) bfreq plot
+p_bfreq <- ggplot(df_base, aes(x = INR, y = log10(bfreq))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = INR), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "orchid4")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 3) exp plot
+p_exp <- ggplot(df_base, aes(x = INR, y = log10(exp))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = INR), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample~expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "orchid4")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+
+grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3)
+#ggsave(paste0(out_dir,"INR_boxplots_expressionbins_E28.pdf"), plot = grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3), width = 8, height = 3, units = "in")
+
+```
+````{r, echo = FALSE}
+
+# INR
+# Filter once for reuse
+df_base <- STAP_annotated %>%
+  mutate(Ebox = as.factor(Ebox))
+
+# 1) bsize plot
+p_bsize <- ggplot(df_base, aes(x = Ebox, y = log10(bsize))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = Ebox), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "coral3")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 2) bfreq plot
+p_bfreq <- ggplot(df_base, aes(x = Ebox, y = log10(bfreq))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = Ebox), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "coral3")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 3) exp plot
+p_exp <- ggplot(df_base, aes(x = Ebox, y = log10(exp))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = Ebox), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample~expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "coral3")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+
+grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3)
+#ggsave(paste0(out_dir,"Ebox_boxplots_expressionbins_E28.pdf"), plot = grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3), width = 8, height = 3, units = "in")
+
+```
+````{r, echo = FALSE}
+
+# INR
+# Filter once for reuse
+df_base <- STAP_annotated %>%
+  mutate(Ohler6 = as.factor(Ohler6))
+
+# 1) bsize plot
+p_bsize <- ggplot(df_base, aes(x = Ohler6, y = log10(bsize))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = Ohler6), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "darkblue")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 2) bfreq plot
+p_bfreq <- ggplot(df_base, aes(x = Ohler6, y = log10(bfreq))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = Ohler6), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "darkblue")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 3) exp plot
+p_exp <- ggplot(df_base, aes(x = Ohler6, y = log10(exp))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = Ohler6), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample~expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "darkblue")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+
+grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3)
+#ggsave(paste0(out_dir,"Ohler6_boxplots_expressionbins_E28.pdf"), plot = grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3), width = 8, height = 3, units = "in")
+
+```
+````{r, echo = FALSE}
+
+# INR
+# Filter once for reuse
+df_base <- STAP_annotated %>%
+  mutate(Ohler1 = as.factor(Ohler1))
+
+# 1) bsize plot
+p_bsize <- ggplot(df_base, aes(x = Ohler1, y = log10(bsize))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = Ohler1), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "lightblue")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 2) bfreq plot
+p_bfreq <- ggplot(df_base, aes(x = Ohler1, y = log10(bfreq))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = Ohler1), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample ~ expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "lightblue")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+# 3) exp plot
+p_exp <- ggplot(df_base, aes(x = Ohler1, y = log10(exp))) +
+  #geom_jitter(alpha = 0.3, color = "darkgrey", width = 0.15) +
+  geom_boxplot(aes(color = Ohler1), alpha = 0.5, outlier.shape = NA) +
+  facet_grid(sample~expression_range) +
+  scale_color_manual(values = c("0" = "grey32", "1" = "lightblue")) +
+  stat_compare_means(
+    method = "wilcox.test",
+    label = "p.format",
+    comparisons = list(c("0", "1"))
+  ) +
+  theme_classic() + 
+  theme(text = element_text(size = 15), legend.position = "none")
+
+
+grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3)
+#ggsave(paste0(out_dir,"Ohler1_boxplots_expressionbins_E28.pdf"), plot = grid.arrange( p_bsize, p_bfreq, p_exp, ncol = 3), width = 8, height = 3, units = "in")
+
+```
+
+
+
+
 
 
