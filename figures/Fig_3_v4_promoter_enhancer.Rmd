@@ -14,6 +14,8 @@ library(readxl)
 library(tibble)
 library(scales)
 
+out_dir <- "/groups/stark/lorbeer/Burst_params_DG/Fig3_global/"
+
 ```
 
 ## Comparison of burst parameters between STAP and STARR-seq
@@ -54,6 +56,15 @@ palette_all <- c(
   "libFL014_E39_p319_pooledby6" = "#B87400"
 )
 
+palette_all <- c(
+  "libFL008_E28_RT2_pooledby2" = "#F2994A",
+  "libFL016_E38_e325_pooledby2" = "#F7D154",
+  "libFL017_E38_e339_pooledby2" = "#B87400",
+  "libFL010_E24_rg_pooledby2" = "#66C2A5",
+  "libFL013_E39_p309_pooledby4" = "#009E73",
+  "libFL014_E39_p319_pooledby6" = "#005D5D"
+)
+
 palette_promoter <- palette_all[samples_promoter]
 palette_enhancer <- palette_all[samples_enhancer]
 
@@ -75,7 +86,7 @@ mu_thresholds <- read_xlsx("/groups/stark/lorbeer/Burst_params_DG/mu_thresholds_
 
 # sanity check: threshold table should be unique by merge key
 dup_keys <- mu_thresholds %>%
-  count(sample, experiment, library) %>%
+  dplyr::count(sample, experiment, library) %>%
   filter(n > 1)
 
 stopifnot(nrow(dup_keys) == 0)
@@ -94,6 +105,32 @@ dat_base <- dat %>%
 
 ```
 
+
+```{r, echo = FALSE}
+require(viridis)
+require(forcats)
+mean_color <- dat_base %>% filter(sample %in% c(samples_promoter, samples_enhancer)) %>%  
+  mutate(sample = fct_relevel(sample,c(samples_promoter, samples_enhancer))) %>%
+  ggplot() + 
+  geom_point(aes(y = log10(bsize), x = log10(bfreq), color = log10(exp))) +
+scale_color_viridis(
+  alpha = 1,
+  begin = 0,
+  end = 1,
+  direction = 1,
+  discrete = FALSE,
+  option = "D",
+  aesthetics = "color"
+) + 
+  facet_wrap(~sample) + 
+      theme_classic(base_size = 15)
+mean_color
+# pdf(paste0(out_dir,"pooled_data_bsize_v_freq_mean_color.pdf"), width = 6.5, height = 5)
+# print(mean_color)
+# dev.off()
+
+
+```
 
 ```{r, echo = FALSE}
 plot_param_vs_exp <- function(df, param, exp_on_x = FALSE, show_points = FALSE,
@@ -231,7 +268,7 @@ make_fit_plot <- function(df, param, exp_on_x = FALSE, show_points = FALSE,
     scale_fill_manual(values = palette_vals) +
     coord_cartesian(xlim = xlim, ylim = ylim) +
     theme_classic(base_size = 15) +
-    theme(legend.position = legend) +
+    theme(legend.position="none") +
     labs(
       title = title_text,
       x = if (exp_on_x) "log10(mean expression)" else paste0("log10(", param, ")"),
@@ -277,6 +314,17 @@ fmt_p <- function(p) {
   )
 }
 
+fmt_label <- function(p, r2) {
+  p_str <- case_when(
+    is.na(p)   ~ "p = NA",
+    p < 1e-4   ~ "p < 0.0001",
+    p < 1e-3   ~ "p < 0.001",
+    TRUE       ~ paste0("p = ", scales::number(p, accuracy = 0.001))
+  )
+  # Combine R2 and the formatted p-value
+  sprintf("R2=%.2f, %s", r2, p_str) 
+}
+
 plot_slopes <- function(stats_df, palette_vals, title_text, y_label) {
   ymax <- max(stats_df$slope + stats_df$slope_se, na.rm = TRUE)
   ymin <- min(stats_df$slope - stats_df$slope_se, na.rm = TRUE)
@@ -289,9 +337,11 @@ plot_slopes <- function(stats_df, palette_vals, title_text, y_label) {
       width = 0.2
     ) +
     geom_text(
-      aes(y = slope + slope_se + label_offset, label = fmt_p(slope_p)),
-      size = 4,
-      vjust = 0
+      # Call fmt_label using slope_p and r2 from the dataframe
+      aes(y = slope + slope_se + label_offset, label = fmt_label(slope_p, r2)),
+      size = 3.5, # Slightly smaller to fit the combined string
+      vjust = 0,
+      angle = 0   # You can set angle = 45 or 90 here if long strings overlap!
     ) +
     scale_fill_manual(values = palette_vals, guide = "none") +
     theme_classic(base_size = 15) +
@@ -370,6 +420,22 @@ all_bfreq_expY_points
 all_bfreq_expX_nopoints
 all_bfreq_expX_points
 
+# pdf(paste0(out_dir,"all_bfreq_expY_nopoints.pdf"), width = 5, height = 5)
+# print(all_bfreq_expY_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"all_bfreq_expY_points.pdf"), width = 5, height = 5)
+# print(all_bfreq_expY_points)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"all_bfreq_expX_nopoints.pdf"), width = 5, height = 5)
+# print(all_bfreq_expX_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"all_bfreq_expX_points.pdf"), width = 5, height = 5)
+# print(all_bfreq_expX_points)
+# dev.off()
+
 ```
 
 ## promoters
@@ -442,6 +508,41 @@ promoter_bfreq_expY_nopoints
 promoter_bfreq_expY_points
 promoter_bfreq_expX_nopoints
 promoter_bfreq_expX_points
+
+# pdf(paste0(out_dir,"promoter_bsize_expY_nopoints.pdf"), width = 5, height = 5)
+# print(promoter_bsize_expY_nopoints)
+# dev.off()
+# 
+pdf(paste0(out_dir,"promoter_bsize_expY_points.pdf"), width = 5, height = 5)
+print(promoter_bsize_expY_points)
+dev.off()
+# 
+# pdf(paste0(out_dir,"promoter_bsize_expX_nopoints.pdf"), width = 5, height = 5)
+# print(promoter_bsize_expX_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"promoter_bsize_expX_points.pdf"), width = 5, height = 5)
+# print(promoter_bsize_expX_points)
+# dev.off()
+# 
+# 
+# pdf(paste0(out_dir,"promoter_bfreq_expY_nopoints.pdf"), width = 5, height = 5)
+# print(promoter_bfreq_expY_nopoints)
+# dev.off()
+# 
+pdf(paste0(out_dir,"promoter_bfreq_expY_points.pdf"), width = 5, height = 5)
+print(promoter_bfreq_expY_points)
+dev.off()
+# 
+# 
+# pdf(paste0(out_dir,"promoter_bfreq_expX_nopoints.pdf"), width = 5, height = 5)
+# print(promoter_bfreq_expX_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"promoter_bfreq_expX_points.pdf"), width = 5, height = 5)
+# print(promoter_bfreq_expX_points)
+# dev.off()
+
 
 
 ```
@@ -517,6 +618,41 @@ enhancer_bsize_expX_nopoints
 enhancer_bsize_expX_points
 
 
+# pdf(paste0(out_dir,"enhancer_bfreq_expY_nopoints.pdf"), width = 5, height = 5)
+# print(enhancer_bfreq_expY_nopoints)
+# dev.off()
+# 
+pdf(paste0(out_dir,"enhancer_bfreq_expY_points.pdf"), width = 5, height = 5)
+print(enhancer_bfreq_expY_points)
+dev.off()
+# 
+# pdf(paste0(out_dir,"enhancer_bfreq_expX_nopoints.pdf"), width = 5, height = 5)
+# print(enhancer_bfreq_expX_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"enhancer_bfreq_expX_points.pdf"), width = 5, height = 5)
+# print(enhancer_bfreq_expX_points)
+# dev.off()
+# 
+# 
+# pdf(paste0(out_dir,"enhancer_bsize_expY_nopoints.pdf"), width = 5, height = 5)
+# print(all_bfreq_expX_points)
+# dev.off()
+# 
+pdf(paste0(out_dir,"enhancer_bsize_expY_points.pdf"), width = 5, height = 5)
+print(enhancer_bsize_expY_points)
+dev.off()
+# 
+# pdf(paste0(out_dir,"enhancer_bsize_expX_nopoints.pdf"), width = 5, height = 5)
+# print(enhancer_bsize_expX_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"enhancer_bsize_expX_points.pdf"), width = 5, height = 5)
+# print(enhancer_bsize_expX_points)
+# dev.off()
+
+
+
 ```
 
 
@@ -581,7 +717,28 @@ slope_bfreq_expY_all
 slope_bsize_expY_all
 
 
+# pdf(paste0(out_dir,"slope_bfreq_expX_all.pdf"), width = 5, height = 5)
+# print(slope_bfreq_expX_all)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"slope_bsize_expX_all.pdf"), width = 5, height = 5)
+# print(slope_bsize_expX_all)
+# dev.off()
+# 
+pdf(paste0(out_dir,"slope_bfreq_expY_all.pdf"), width = 5, height = 5)
+print(slope_bfreq_expY_all)
+dev.off()
+
+pdf(paste0(out_dir,"slope_bsize_expY_all.pdf"), width = 5, height = 5)
+print(slope_bsize_expY_all)
+dev.off()
+
 ```
 
+```{r, echo = FALSE}
 
+
+
+
+```
 
