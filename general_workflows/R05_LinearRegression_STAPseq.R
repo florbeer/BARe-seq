@@ -14,7 +14,7 @@
 
 #setwd() #if required
 
-library(scModels)
+#library(scModels)
 library(dplyr)
 library(numDeriv)
 
@@ -23,7 +23,7 @@ library(ggpubr)
 library(patchwork)
 
 library("glmnet")
-library("caret")
+#library("caret")
 
 source("../main_functions/R01_Opitmization_Functions.R") #adapt the path if required
 source("../main_functions/R02_LinearReg_Functions.R") #adapt the path if required

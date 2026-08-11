@@ -3,7 +3,7 @@
 #Computing the profile likelihood and confidence intervals in bash mode with RScript
 #setwd() #if required
 
-library(scModels)
+#library(scModels)
 library(dplyr)
 library(numDeriv)
 library(rootSolve)
