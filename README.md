@@ -4,7 +4,7 @@
 
 ![BARe-seq scheme](img/BARe-seq_scheme.png)
 
-## Abstract
+## Assay description
 
 Transcriptional bursts determine RNA output through two kinetic parameters: burst size and burst frequency. How cis-regulatory DNA encodes these kinetic parameters remains unclear, in part because existing approaches do not combine scalable sequence perturbation with allele-resolved burst inference. Here, we developed Bulk Allele Resolution Sequencing (BARe-seq), an allele-resolved massively parallel reporter assay that enables inference of transcriptional burst parameters from bulk sequencing. BARe-seq dissects cis-regulatory control of transcriptional bursting and extends allele-resolved measurements to pooled reporter assays in bulk sequencing experiments.
 
