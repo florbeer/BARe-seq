@@ -13,14 +13,14 @@ setwd(sample_path)
 
 #set the output directory
 dir <- "/groups/stark/lorbeer/output_directory/"
-out_dir <- paste0(dir,"out/",experiment,"_raw_qc/")
+qc_dir <- paste0(dir,"out/",experiment,"_raw_qc/")
 
 #params
 #filter cutoff set to 2%
 cutoff <- 0.02
 
 #file for determining thresholds for each experiment for filtering data from script01
-thresholds <- fread(paste0(out_dir,experiment,"_raw_qc","/thresholding_",experiment,".txt"))
+thresholds <- fread(paste0(qc_dir,experiment,"_raw_qc","/thresholding_",experiment,".txt"))
 
 # determining the threshold for each file based on the cutoff defined in params
 thresholds$cutoff <- round(cutoff * thresholds$median)
@@ -29,7 +29,7 @@ thresholds
 write.table(thresholds, paste0(sample_path , experiment, "_thresholds_applied.txt"))
 
 # Path where script01 wrote the annotated per-sample files
-annot_dir <- paste0("/groups/stark/lorbeer/analysis_TWIST14_Nov22/out/", experiment, "_raw_qc/annotated_samples/")
+annot_dir <- paste0(dir,"out/", experiment, "_raw_qc/annotated_samples/")
 stopifnot(dir.exists(annot_dir))
 
 #define the sample names based on files in directory 
@@ -41,7 +41,7 @@ if(!dir.exists(paste0(sample_path,"cutoffv4_",cutoff,"_UMImatch/")))
 {
   dir.create(paste0(sample_path,"cutoffv4_",cutoff,"_UMImatch/"))
 }
-#set as iytut directory
+#set as intut directory
 out_dir <- paste0(sample_path,"cutoffv4_",cutoff,"_UMImatch/")
 
 
