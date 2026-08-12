@@ -1,0 +1,744 @@
+---
+title: "Fig3_Global_comparisons"
+author: "FL"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warnings = FALSE)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(tibble)
+library(scales)
+
+out_dir <- "/groups/stark/lorbeer/Burst_params_DG/Fig3_global/"
+
+```
+
+## Comparison of burst parameters between STAP and STARR-seq
+We want to figure out how promoters and enhancers shape burst parameters 
+1) Loading both data sets and merging them to have one data set "dat" that contains all the information 
+2) Loading the mu threshold excel file (March 2026)
+
+```{r, echo = FALSE}
+#loading data that is required for Fig 3
+
+samples_all <- c(
+  "libFL008_E28_RT2_pooledby2",
+  "libFL016_E38_e325_pooledby2",
+  "libFL017_E38_e339_pooledby2",
+  "libFL010_E24_rg_pooledby2", 
+  "libFL013_E39_p309_pooledby4", 
+  "libFL014_E39_p319_pooledby6"
+)
+
+samples_promoter <- c(
+  "libFL008_E28_RT2_pooledby2",
+  "libFL016_E38_e325_pooledby2",
+  "libFL017_E38_e339_pooledby2"
+)
+
+samples_enhancer <- c(
+  "libFL010_E24_rg_pooledby2", 
+  "libFL013_E39_p309_pooledby4", 
+  "libFL014_E39_p319_pooledby6"
+)
+
+palette_all <- c(
+  "libFL008_E28_RT2_pooledby2" = "#1E88E5",
+  "libFL016_E38_e325_pooledby2" = "#8CCBFF",
+  "libFL017_E38_e339_pooledby2" = "#0B3D91",
+  "libFL010_E24_rg_pooledby2" = "#F2994A",
+  "libFL013_E39_p309_pooledby4" = "#F7D154",
+  "libFL014_E39_p319_pooledby6" = "#B87400"
+)
+
+palette_all <- c(
+  "libFL008_E28_RT2_pooledby2" = "#F2994A",
+  "libFL016_E38_e325_pooledby2" = "#F7D154",
+  "libFL017_E38_e339_pooledby2" = "#B87400",
+  "libFL010_E24_rg_pooledby2" = "#66C2A5",
+  "libFL013_E39_p309_pooledby4" = "#009E73",
+  "libFL014_E39_p319_pooledby6" = "#005D5D"
+)
+
+palette_promoter <- palette_all[samples_promoter]
+palette_enhancer <- palette_all[samples_enhancer]
+
+columns_to_use <- c(
+  "seq_ID", "sample", "condition", "experiment", "library", "rep",
+  "bfreq", "bsize", "exp", "log2FoldChange", "full_prec2", "high_mu",
+  "filter1", "filter2", "bfreq.thres", "bsize.thres", "KS_pval"
+)
+
+STAP_annotated <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/STAP_annotated_Fig1_compiled_v2.rds")
+STARR_annotated <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STARR_March2025_pools/STARR_annotated_log2FC.rds")
+
+dat <- rbind(
+  STAP_annotated[, columns_to_use, with = FALSE],
+  STARR_annotated[, columns_to_use, with = FALSE]
+)
+
+mu_thresholds <- read_xlsx("/groups/stark/lorbeer/Burst_params_DG/mu_thresholds_v2_Reyna.xlsx")
+
+# sanity check: threshold table should be unique by merge key
+dup_keys <- mu_thresholds %>%
+  dplyr::count(sample, experiment, library) %>%
+  filter(n > 1)
+
+stopifnot(nrow(dup_keys) == 0)
+
+dat <- merge(dat, mu_thresholds, by = c("sample", "experiment", "library"), all.x = TRUE)
+
+# do not overwrite existing high_mu silently
+dat[, high_mu_march2026 := exp >= mu_threshold_nofilter]
+
+dat_base <- dat %>%
+  filter(
+    KS_pval > 0.01,
+    high_mu_march2026 == TRUE,
+    sample %in% samples_all
+  )
+
+```
+
+
+```{r, echo = FALSE}
+require(viridis)
+require(forcats)
+mean_color <- dat_base %>% filter(sample %in% c(samples_promoter, samples_enhancer)) %>%  
+  mutate(sample = fct_relevel(sample,c(samples_promoter, samples_enhancer))) %>%
+  ggplot() + 
+  geom_point(aes(y = log10(bsize), x = log10(bfreq), color = log10(exp))) +
+scale_color_viridis(
+  alpha = 1,
+  begin = 0,
+  end = 1,
+  direction = 1,
+  discrete = FALSE,
+  option = "D",
+  aesthetics = "color"
+) + 
+  facet_wrap(~sample) + 
+      theme_classic(base_size = 15)
+mean_color
+# pdf(paste0(out_dir,"pooled_data_bsize_v_freq_mean_color.pdf"), width = 6.5, height = 5)
+# print(mean_color)
+# dev.off()
+
+
+```
+
+```{r, echo = FALSE}
+plot_param_vs_exp <- function(df, param, exp_on_x = FALSE, show_points = FALSE,
+                              sample_levels, palette_vals,
+                              xlim = NULL, ylim = NULL, title_text = NULL) {
+  
+  df_plot <- df %>%
+    filter(.data[[param]] > 0, exp > 0) %>%
+    mutate(sample = factor(sample, levels = sample_levels))
+  
+  if (exp_on_x) {
+    p <- ggplot(df_plot, aes(x = log10(exp), y = log10(.data[[param]])))
+  } else {
+    p <- ggplot(df_plot, aes(x = log10(.data[[param]]), y = log10(exp)))
+  }
+  
+  if (show_points) {
+    p <- p + geom_point(aes(color = sample), alpha = 0.25, na.rm = FALSE)
+  }
+  
+  p +
+    geom_smooth(
+      aes(color = sample, fill = sample),
+      method = "lm",
+      formula = y ~ x,
+      se = TRUE,
+      alpha = 0.2,
+      na.rm = FALSE
+    ) +
+    scale_color_manual(values = palette_vals) +
+    scale_fill_manual(values = palette_vals) +
+    coord_cartesian(xlim = xlim, ylim = ylim) +
+    theme_classic(base_size = 15) +
+    labs(
+      x = if (exp_on_x) "log10(mean expression)" else paste0("log10(", param, ")"),
+      y = if (exp_on_x) paste0("log10(", param, ")") else "log10(mean expression)",
+      title = title_text
+    )
+}
+
+
+```
+
+
+```{r, echo = FALSE}
+summarize_lm_direction <- function(df, param, exp_on_x = TRUE) {
+  df_model <- df %>%
+    filter(exp > 0, .data[[param]] > 0) %>%
+    mutate(
+      x = if (exp_on_x) log10(exp) else log10(.data[[param]]),
+      y = if (exp_on_x) log10(.data[[param]]) else log10(exp)
+    ) %>%
+    filter(is.finite(x), is.finite(y))
+  
+  df_model %>%
+    group_by(sample) %>%
+    do({
+      m <- lm(y ~ x, data = .)
+      tibble(
+        intercept    = coef(m)[["(Intercept)"]],
+        slope        = coef(m)[["x"]],
+        intercept_se = coef(summary(m))[1, "Std. Error"],
+        slope_se     = coef(summary(m))[2, "Std. Error"],
+        slope_p      = coef(summary(m))[2, "Pr(>|t|)"],
+        r2           = summary(m)$r.squared,
+        adj_r2       = summary(m)$adj.r.squared,
+        sigma        = summary(m)$sigma,
+        nobs         = length(m$fitted.values)
+      )
+    }) %>%
+    ungroup() %>%
+    arrange(sample)
+}
+
+
+```
+
+
+```{r, echo = FALSE}
+
+bfreq_on_exp_stats <- summarize_lm_direction(dat_base, param = "bfreq", exp_on_x = TRUE)
+bsize_on_exp_stats <- summarize_lm_direction(dat_base, param = "bsize", exp_on_x = TRUE)
+
+exp_on_bfreq_stats <- summarize_lm_direction(dat_base, param = "bfreq", exp_on_x = FALSE)
+exp_on_bsize_stats <- summarize_lm_direction(dat_base, param = "bsize", exp_on_x = FALSE)
+
+print("bfreq on exp stats")
+bfreq_on_exp_stats
+print("bsize on exp stats")
+bsize_on_exp_stats
+print("exp_on_bfreq_stats")
+exp_on_bfreq_stats
+print("exp_on_bsize_stats")
+exp_on_bsize_stats
+
+```
+
+```{r, echo = FALSE}
+prep_plot_data <- function(df, param, sample_levels) {
+  df %>%
+    filter(
+      sample %in% sample_levels,
+      exp > 0,
+      .data[[param]] > 0
+    ) %>%
+    mutate(sample = factor(sample, levels = sample_levels))
+}
+
+make_fit_plot <- function(df, param, exp_on_x = FALSE, show_points = FALSE,
+                          sample_levels, palette_vals,
+                          xlim = NULL, ylim = NULL,
+                          title_text = NULL, legend = "none") {
+  
+  df_plot <- prep_plot_data(df, param, sample_levels)
+  
+  if (exp_on_x) {
+    p <- ggplot(df_plot, aes(x = log10(exp), y = log10(.data[[param]])))
+  } else {
+    p <- ggplot(df_plot, aes(x = log10(.data[[param]]), y = log10(exp)))
+  }
+  
+  if (show_points) {
+    p <- p + geom_point(aes(color = sample), alpha = 0.25)
+  }
+  
+  p +
+    geom_smooth(
+      aes(color = sample, fill = sample),
+      method = "lm",
+      formula = y ~ x,
+      se = TRUE,
+      alpha = 0.2
+    ) +
+    scale_color_manual(values = palette_vals) +
+    scale_fill_manual(values = palette_vals) +
+    coord_cartesian(xlim = xlim, ylim = ylim) +
+    theme_classic(base_size = 15) +
+    theme(legend.position="none") +
+    labs(
+      title = title_text,
+      x = if (exp_on_x) "log10(mean expression)" else paste0("log10(", param, ")"),
+      y = if (exp_on_x) paste0("log10(", param, ")") else "log10(mean expression)"
+    )
+}
+
+summarize_lm_direction <- function(df, param, exp_on_x = TRUE, sample_levels) {
+  df_model <- prep_plot_data(df, param, sample_levels) %>%
+    mutate(
+      x = if (exp_on_x) log10(exp) else log10(.data[[param]]),
+      y = if (exp_on_x) log10(.data[[param]]) else log10(exp)
+    ) %>%
+    filter(is.finite(x), is.finite(y))
+  
+  df_model %>%
+    group_by(sample) %>%
+    do({
+      m <- lm(y ~ x, data = .)
+      tibble(
+        intercept    = coef(m)[["(Intercept)"]],
+        slope        = coef(m)[["x"]],
+        intercept_se = coef(summary(m))[1, "Std. Error"],
+        slope_se     = coef(summary(m))[2, "Std. Error"],
+        slope_p      = coef(summary(m))[2, "Pr(>|t|)"],
+        r2           = summary(m)$r.squared,
+        adj_r2       = summary(m)$adj.r.squared,
+        sigma        = summary(m)$sigma,
+        nobs         = length(m$fitted.values)
+      )
+    }) %>%
+    ungroup() %>%
+    mutate(sample = factor(sample, levels = sample_levels)) %>%
+    arrange(sample)
+}
+
+fmt_p <- function(p) {
+  case_when(
+    is.na(p)   ~ "p = NA",
+    p < 1e-4   ~ "p < 0.0001",
+    p < 1e-3   ~ "p < 0.001",
+    TRUE       ~ paste0("p = ", scales::number(p, accuracy = 0.001))
+  )
+}
+
+fmt_label <- function(p, r2) {
+  p_str <- case_when(
+    is.na(p)   ~ "p = NA",
+    p < 1e-4   ~ "p < 0.0001",
+    p < 1e-3   ~ "p < 0.001",
+    TRUE       ~ paste0("p = ", scales::number(p, accuracy = 0.001))
+  )
+  # Combine R2 and the formatted p-value
+  sprintf("R2=%.2f, %s", r2, p_str) 
+}
+
+plot_slopes <- function(stats_df, palette_vals, title_text, y_label) {
+  ymax <- max(stats_df$slope + stats_df$slope_se, na.rm = TRUE)
+  ymin <- min(stats_df$slope - stats_df$slope_se, na.rm = TRUE)
+  label_offset <- 0.05 * max(ymax - ymin, 0.1)
+  
+  ggplot(stats_df, aes(x = sample, y = slope, fill = sample)) +
+    geom_col(width = 0.8) +
+    geom_errorbar(
+      aes(ymin = slope - slope_se, ymax = slope + slope_se),
+      width = 0.2
+    ) +
+    geom_text(
+      # Call fmt_label using slope_p and r2 from the dataframe
+      aes(y = slope + slope_se + label_offset, label = fmt_label(slope_p, r2)),
+      size = 3.5, # Slightly smaller to fit the combined string
+      vjust = 0,
+      angle = 0   # You can set angle = 45 or 90 here if long strings overlap!
+    ) +
+    scale_fill_manual(values = palette_vals, guide = "none") +
+    theme_classic(base_size = 15) +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1)) +
+    labs(
+      title = title_text,
+      x = "Sample",
+      y = y_label
+    )
+}
+```
+
+## plotting all samples together for contrast (but a bit messy)
+
+```{r, echo = FALSE}
+# Expression on y-axis
+all_bfreq_expY_nopoints <- make_fit_plot(
+  dat_base, param = "bfreq", exp_on_x = FALSE, show_points = FALSE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-2, 0.5), ylim = c(-1.5, 1.25),
+  title_text = "All samples: log10(exp) vs log10(bfreq)", legend = "right"
+)
+
+all_bsize_expY_nopoints <- make_fit_plot(
+  dat_base, param = "bsize", exp_on_x = FALSE, show_points = FALSE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-1.5, 1.5), ylim = c(-1.25, 1.25),
+  title_text = "All samples: log10(exp) vs log10(bsize)", legend = "none"
+)
+
+all_bfreq_expY_points <- make_fit_plot(
+  dat_base, param = "bfreq", exp_on_x = FALSE, show_points = TRUE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-2, 0.5), ylim = c(-1.5, 1.25),
+  title_text = "All samples: log10(exp) vs log10(bfreq) + points", legend = "right"
+)
+
+all_bsize_expY_points <- make_fit_plot(
+  dat_base, param = "bsize", exp_on_x = FALSE, show_points = TRUE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-1.5, 1.5), ylim = c(-1.25, 1.25),
+  title_text = "All samples: log10(exp) vs log10(bsize) + points", legend = "none"
+)
+
+# Expression on x-axis
+all_bfreq_expX_nopoints <- make_fit_plot(
+  dat_base, param = "bfreq", exp_on_x = TRUE, show_points = FALSE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-1.5, 1.25), ylim = c(-2, 0.5),
+  title_text = "All samples: log10(bfreq) vs log10(exp)", legend = "right"
+)
+
+all_bsize_expX_nopoints <- make_fit_plot(
+  dat_base, param = "bsize", exp_on_x = TRUE, show_points = FALSE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-1.25, 1.25), ylim = c(-1.5, 1.5),
+  title_text = "All samples: log10(bsize) vs log10(exp)", legend = "none"
+)
+
+all_bfreq_expX_points <- make_fit_plot(
+  dat_base, param = "bfreq", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-1.5, 1.25), ylim = c(-2, 0.5),
+  title_text = "All samples: log10(bfreq) vs log10(exp) + points", legend = "right"
+)
+
+all_bsize_expX_points <- make_fit_plot(
+  dat_base, param = "bsize", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-1.25, 1.25), ylim = c(-1.5, 1.5),
+  title_text = "All samples: log10(bsize) vs log10(exp) + points", legend = "none"
+)
+
+all_bfreq_expY_nopoints
+all_bfreq_expY_points
+all_bfreq_expX_nopoints
+all_bfreq_expX_points
+
+# pdf(paste0(out_dir,"all_bfreq_expY_nopoints.pdf"), width = 5, height = 5)
+# print(all_bfreq_expY_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"all_bfreq_expY_points.pdf"), width = 5, height = 5)
+# print(all_bfreq_expY_points)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"all_bfreq_expX_nopoints.pdf"), width = 5, height = 5)
+# print(all_bfreq_expX_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"all_bfreq_expX_points.pdf"), width = 5, height = 5)
+# print(all_bfreq_expX_points)
+# dev.off()
+
+```
+
+## promoters
+
+```{r, echo = FALSE}
+
+promoter_bfreq_expY_nopoints <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = FALSE, show_points = FALSE,
+  sample_levels = samples_promoter, palette_vals = palette_promoter,
+  xlim = c(-2, 0.5), ylim = c(-1.5, 1.25),
+  title_text = "Promoters: log10(exp) vs log10(bfreq)"
+)
+
+promoter_bsize_expY_nopoints <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = FALSE, show_points = FALSE,
+  sample_levels = samples_promoter, palette_vals = palette_promoter,
+  xlim = c(-1.5, 1.5), ylim = c(-1.25, 1.25),
+  title_text = "Promoters: log10(exp) vs log10(bsize)"
+)
+
+promoter_bfreq_expY_points <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = FALSE, show_points = TRUE,
+  sample_levels = samples_promoter, palette_vals = palette_promoter,
+  xlim = c(-2, 0.5), ylim = c(-1.5, 1.25),
+  title_text = "Promoters: log10(exp) vs log10(bfreq) + points"
+)
+
+promoter_bsize_expY_points <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = FALSE, show_points = TRUE,
+  sample_levels = samples_promoter, palette_vals = palette_promoter,
+  xlim = c(-1.5, 1.5), ylim = c(-1.25, 1.25),
+  title_text = "Promoters: log10(exp) vs log10(bsize) + points"
+)
+
+promoter_bfreq_expX_nopoints <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = TRUE, show_points = FALSE,
+  sample_levels = samples_promoter, palette_vals = palette_promoter,
+  xlim = c(-1.5, 1.25), ylim = c(-2, 0.5),
+  title_text = "Promoters: log10(bfreq) vs log10(exp)"
+)
+
+promoter_bsize_expX_nopoints <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = TRUE, show_points = FALSE,
+  sample_levels = samples_promoter, palette_vals = palette_promoter,
+  xlim = c(-1.25, 1.25), ylim = c(-1.5, 1.5),
+  title_text = "Promoters: log10(bsize) vs log10(exp)"
+)
+
+promoter_bfreq_expX_points <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_promoter, palette_vals = palette_promoter,
+  xlim = c(-1.5, 1.25), ylim = c(-2, 0.5),
+  title_text = "Promoters: log10(bfreq) vs log10(exp) + points"
+)
+
+promoter_bsize_expX_points <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_promoter, palette_vals = palette_promoter,
+  xlim = c(-1.25, 1.25), ylim = c(-1.5, 1.5),
+  title_text = "Promoters: log10(bsize) vs log10(exp) + points"
+)
+
+
+promoter_bsize_expY_nopoints
+promoter_bsize_expY_points
+promoter_bsize_expX_nopoints
+promoter_bsize_expX_points
+
+promoter_bfreq_expY_nopoints
+promoter_bfreq_expY_points
+promoter_bfreq_expX_nopoints
+promoter_bfreq_expX_points
+
+# pdf(paste0(out_dir,"promoter_bsize_expY_nopoints.pdf"), width = 5, height = 5)
+# print(promoter_bsize_expY_nopoints)
+# dev.off()
+# 
+pdf(paste0(out_dir,"promoter_bsize_expY_points.pdf"), width = 5, height = 5)
+print(promoter_bsize_expY_points)
+dev.off()
+# 
+# pdf(paste0(out_dir,"promoter_bsize_expX_nopoints.pdf"), width = 5, height = 5)
+# print(promoter_bsize_expX_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"promoter_bsize_expX_points.pdf"), width = 5, height = 5)
+# print(promoter_bsize_expX_points)
+# dev.off()
+# 
+# 
+# pdf(paste0(out_dir,"promoter_bfreq_expY_nopoints.pdf"), width = 5, height = 5)
+# print(promoter_bfreq_expY_nopoints)
+# dev.off()
+# 
+pdf(paste0(out_dir,"promoter_bfreq_expY_points.pdf"), width = 5, height = 5)
+print(promoter_bfreq_expY_points)
+dev.off()
+# 
+# 
+# pdf(paste0(out_dir,"promoter_bfreq_expX_nopoints.pdf"), width = 5, height = 5)
+# print(promoter_bfreq_expX_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"promoter_bfreq_expX_points.pdf"), width = 5, height = 5)
+# print(promoter_bfreq_expX_points)
+# dev.off()
+
+
+
+```
+
+## enhancers
+
+```{r, echo = FALSE}
+enhancer_bfreq_expY_nopoints <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = FALSE, show_points = FALSE,
+  sample_levels = samples_enhancer, palette_vals = palette_enhancer,
+  xlim = c(-2, 0.5), ylim = c(-1.5, 1.25),
+  title_text = "Enhancers: log10(exp) vs log10(bfreq)"
+)
+
+enhancer_bsize_expY_nopoints <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = FALSE, show_points = FALSE,
+  sample_levels = samples_enhancer, palette_vals = palette_enhancer,
+  xlim = c(-1.5, 1.5), ylim = c(-1.25, 1.25),
+  title_text = "Enhancers: log10(exp) vs log10(bsize)"
+)
+
+enhancer_bfreq_expY_points <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = FALSE, show_points = TRUE,
+  sample_levels = samples_enhancer, palette_vals = palette_enhancer,
+  xlim = c(-2, 0.5), ylim = c(-1.5, 1.25),
+  title_text = "Enhancers: log10(exp) vs log10(bfreq) + points"
+)
+
+enhancer_bsize_expY_points <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = FALSE, show_points = TRUE,
+  sample_levels = samples_enhancer, palette_vals = palette_enhancer,
+  xlim = c(-1.5, 1.5), ylim = c(-1.25, 1.25),
+  title_text = "Enhancers: log10(exp) vs log10(bsize) + points"
+)
+
+enhancer_bfreq_expX_nopoints <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = TRUE, show_points = FALSE,
+  sample_levels = samples_enhancer, palette_vals = palette_enhancer,
+  xlim = c(-1.5, 1.25), ylim = c(-2, 0.5),
+  title_text = "Enhancers: log10(bfreq) vs log10(exp)"
+)
+
+enhancer_bsize_expX_nopoints <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = TRUE, show_points = FALSE,
+  sample_levels = samples_enhancer, palette_vals = palette_enhancer,
+  xlim = c(-1.25, 1.25), ylim = c(-1.5, 1.5),
+  title_text = "Enhancers: log10(bsize) vs log10(exp)"
+)
+
+enhancer_bfreq_expX_points <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_enhancer, palette_vals = palette_enhancer,
+  xlim = c(-1.5, 1.25), ylim = c(-2, 0.5),
+  title_text = "Enhancers: log10(bfreq) vs log10(exp) + points"
+)
+
+enhancer_bsize_expX_points <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_enhancer, palette_vals = palette_enhancer,
+  xlim = c(-1.25, 1.25), ylim = c(-1.5, 1.5),
+  title_text = "Enhancers: log10(bsize) vs log10(exp) + points"
+)
+
+
+enhancer_bfreq_expY_nopoints
+enhancer_bfreq_expY_points
+enhancer_bfreq_expX_nopoints
+enhancer_bfreq_expX_points
+
+enhancer_bsize_expY_nopoints
+enhancer_bsize_expY_points
+enhancer_bsize_expX_nopoints
+enhancer_bsize_expX_points
+
+
+# pdf(paste0(out_dir,"enhancer_bfreq_expY_nopoints.pdf"), width = 5, height = 5)
+# print(enhancer_bfreq_expY_nopoints)
+# dev.off()
+# 
+pdf(paste0(out_dir,"enhancer_bfreq_expY_points.pdf"), width = 5, height = 5)
+print(enhancer_bfreq_expY_points)
+dev.off()
+# 
+# pdf(paste0(out_dir,"enhancer_bfreq_expX_nopoints.pdf"), width = 5, height = 5)
+# print(enhancer_bfreq_expX_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"enhancer_bfreq_expX_points.pdf"), width = 5, height = 5)
+# print(enhancer_bfreq_expX_points)
+# dev.off()
+# 
+# 
+# pdf(paste0(out_dir,"enhancer_bsize_expY_nopoints.pdf"), width = 5, height = 5)
+# print(all_bfreq_expX_points)
+# dev.off()
+# 
+pdf(paste0(out_dir,"enhancer_bsize_expY_points.pdf"), width = 5, height = 5)
+print(enhancer_bsize_expY_points)
+dev.off()
+# 
+# pdf(paste0(out_dir,"enhancer_bsize_expX_nopoints.pdf"), width = 5, height = 5)
+# print(enhancer_bsize_expX_nopoints)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"enhancer_bsize_expX_points.pdf"), width = 5, height = 5)
+# print(enhancer_bsize_expX_points)
+# dev.off()
+
+
+
+```
+
+
+```{r, echo = FALSE}
+
+
+bfreq_stats_expX_all <- summarize_lm_direction(
+  dat_base, param = "bfreq", exp_on_x = TRUE, sample_levels = samples_all
+)
+
+bsize_stats_expX_all <- summarize_lm_direction(
+  dat_base, param = "bsize", exp_on_x = TRUE, sample_levels = samples_all
+)
+
+bfreq_stats_expY_all <- summarize_lm_direction(
+  dat_base, param = "bfreq", exp_on_x = FALSE, sample_levels = samples_all
+)
+
+bsize_stats_expY_all <- summarize_lm_direction(
+  dat_base, param = "bsize", exp_on_x = FALSE, sample_levels = samples_all
+)
+
+slope_bfreq_expX_all <- plot_slopes(
+  bfreq_stats_expX_all,
+  palette_vals = palette_all,
+  title_text = "All samples: slope of log10(bfreq) ~ log10(exp)",
+  y_label = "Slope of log10(bfreq) on log10(exp)"
+)
+
+slope_bsize_expX_all <- plot_slopes(
+  bsize_stats_expX_all,
+  palette_vals = palette_all,
+  title_text = "All samples: slope of log10(bsize) ~ log10(exp)",
+  y_label = "Slope of log10(bsize) on log10(exp)"
+)
+
+slope_bfreq_expY_all <- plot_slopes(
+  bfreq_stats_expY_all,
+  palette_vals = palette_all,
+  title_text = "All samples: slope of log10(exp) ~ log10(bfreq)",
+  y_label = "Slope of log10(exp) on log10(bfreq)"
+)
+
+slope_bsize_expY_all <- plot_slopes(
+  bsize_stats_expY_all,
+  palette_vals = palette_all,
+  title_text = "All samples: slope of log10(exp) ~ log10(bsize)",
+  y_label = "Slope of log10(exp) on log10(bsize)"
+)
+
+```
+
+
+```{r, echo = FALSE}
+
+
+
+
+slope_bfreq_expX_all
+slope_bsize_expX_all
+slope_bfreq_expY_all
+slope_bsize_expY_all
+
+
+# pdf(paste0(out_dir,"slope_bfreq_expX_all.pdf"), width = 5, height = 5)
+# print(slope_bfreq_expX_all)
+# dev.off()
+# 
+# pdf(paste0(out_dir,"slope_bsize_expX_all.pdf"), width = 5, height = 5)
+# print(slope_bsize_expX_all)
+# dev.off()
+# 
+pdf(paste0(out_dir,"slope_bfreq_expY_all.pdf"), width = 5, height = 5)
+print(slope_bfreq_expY_all)
+dev.off()
+
+pdf(paste0(out_dir,"slope_bsize_expY_all.pdf"), width = 5, height = 5)
+print(slope_bsize_expY_all)
+dev.off()
+
+```
+
+```{r, echo = FALSE}
+
+
+
+
+```
+

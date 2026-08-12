@@ -1,0 +1,449 @@
+---
+title: "Fig4_BARe-seq_v1"
+author: "FL"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+require(data.table)
+require(ggplot2)
+require(broom)
+require(purrr)
+require(metafor)
+library(dplyr)
+library(tidyr)
+require(readxl)
+require(ggrepel)
+
+setwd("/groups/stark/lorbeer/Burst_params_DG/STARR_March2025_pools/")
+out_dir <- "/groups/stark/lorbeer/Burst_params_DG/STARR_March2025_pools/Fig4_enhancer/"
+
+```
+
+
+
+```{r}
+#load data 
+# Import motif counts 
+param <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STARR_March2025_pools/STARR_annotated_log2FC.rds")
+sample_names <- unique(as.factor(param$sample))
+sample_names <- sample_names[c(1:3, 7:9, 13:15)]
+
+pooled_samples <- c("libFL010_E24_rg_pooledby2", "libFL013_E39_p309_pooledby4", "libFL014_E39_p319_pooledby6")
+
+mu_thresholds <- read_xlsx("/groups/stark/lorbeer/Burst_params_DG/mu_thresholds_v2_Reyna.xlsx")
+param <- merge(param, mu_thresholds, by = c("sample", "experiment", "library"), all.x = TRUE)
+param[, high_mu := exp >= mu_threshold_nofilter]
+
+head(param)
+
+param_list <- list()
+#read into list object and set filtering criteria 
+for (s in sample_names) {
+  #param_list[[s]] <- as.data.frame(param[sample == s & (full_prec2 ==TRUE & high_mu == TRUE)])
+  #param_list[[s]] <- as.data.frame(param[sample == s & (bfreq.thres == TRUE & bsize.thres == TRUE & KS_pval > 0.01)])
+  param_list[[s]] <- as.data.frame(param[sample == s & (high_mu & KS_pval > 0.01)])
+}
+```
+
+#DEsea data
+```{r, echo = FALSE}
+#STARR data
+STARR_annotated <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STARR_March2025_pools/STARR_data_annotated.rds")
+STARR_annotated[grepl("polyA", sample),
+  sample := sub("(E\\d+)_", "\\1v4_", sample)
+]
+STARR_annotated[, c("lib","experiment","condition", "rep"):= tstrsplit(sample, "_", keep= c(1:4))]
+
+#
+diff_exp <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STARR_March2025_pools/diff_exp_sub_STARRexperiments_input.rds")
+diff_exp_long <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STARR_March2025_pools/diff_exp_longtable_STARRexperiments.rds")
+
+#read in mu thresholds 
+#mu_thresholds <- read_xlsx("/groups/stark/lorbeer/Burst_params_DG/mu_thresholds.xlsx")
+
+STARR_annotated <- merge(STARR_annotated, mu_thresholds, by = c("sample", "experiment"), all.x = TRUE)
+```
+
+
+```{r, echo = FALSE }
+require(vroom)
+require(data.table)
+require(ggplot2)
+require(gridExtra)
+require(pheatmap)
+require(stringr)
+require(dplyr)
+
+test2 <- read.delim("/groups/stark/lorbeer/STARR-TWIST/STARR_TWIST_metadata_v2_Ohlerincluded.txt")
+test1 <- read.delim("/groups/stark/lorbeer/STARR-TWIST/STARR_TWIST_metadata_v2.txt")
+test3 <- readRDS("/groups/stark/lorbeer/STARR-TWIST/Oligos_with_motif_counts_2022code_subsettedmotifs_Ohlerincluded.rds")
+enhancers <- test3[which(test3$`oligos_motif_counts$ID` %in% test1$ID),]
+colnames(enhancers) <- c("seq_ID", "ETS", "SREBP", "Trl", "AP1", "GATA", "twist", "Ohler6", "Ohler8", "Dref", "Ohler7", "Ohler1")
+
+```
+
+
+```{r, echo=FALSE}
+main_mots <- c("ETS", "SREBP", "Trl", "AP1", "GATA", "twist", "Ohler6", "Dref", "Ohler7", "Ohler1")
+TF_motifs <- main_mots
+names(TF_motifs) <- main_mots
+
+enhancers$main_mots <- ""
+for (x in names(TF_motifs)){
+  column <- enhancers[[x]]  # Use [[ ]] for column extraction
+  enhancers$main_mots <- paste0(enhancers$main_mots, ifelse(column == 0, "", paste0(x, "-")))
+}
+
+require(ggupset)
+#enhancers_selected$categories_list <- lapply(strsplit(promoter_selected$main_mots, "-"), unlist(unlist))
+#prom_selected_test <- cbind(lapply(strsplit(enhancers_selected$main_mots, "-"), unlist(unlist)), enhancers_selected)
+#test2 <- cbind(promoter_selected, lapply(prom_selected_test$categories_list, unlist))
+
+enhancers$V2 <- lapply(strsplit(enhancers$main_mots, "-"), unlist(unlist))
+
+
+```
+
+
+```{r, echo = FALSE}
+#count how many lines have which motif
+#https://r-graph-gallery.com/128-ring-or-donut-plot.html
+#https://rforpoliticalscience.com/2020/07/26/make-wes-anderson-themed-graphs-with-wesanderson-package-in-r/ 
+TF_freq <- as.data.frame(table(unlist(lapply(strsplit(enhancers$main_mots, "-"), unlist(unlist)))))
+
+# 2. Set the desired order natively as a factor
+desired_order <- c("ETS", "GATA", "AP1", "SREBP", "Trl", "twist", "Ohler6", "Ohler7", "Ohler1", "Dref") 
+TF_freq$Var1 <- factor(TF_freq$Var1, levels = desired_order)
+
+# 3. Colors (with Ohler7!)
+motif_cols <- c(
+  "ETS" = "darkorange",
+  "GATA" = "red",
+  "AP1" = "orange", 
+  "SREBP" = "darkred", 
+  "Trl" = "pink",
+  "twist" = "pink3",
+  "Ohler6" = "lightblue",
+  "Ohler7" = "dodgerblue1", 
+  "Ohler1" = "darkblue",
+  "Dref" = "blue"
+)
+
+# 4. Plot using geom_col() instead of geom_rect()
+motif_plot <- ggplot(TF_freq, aes(x = 3, y = Freq, fill = Var1)) +
+  geom_col() +                     # geom_col automatically stacks based on factor order!
+  coord_polar(theta = "y") +       # Wrap the stacked bar into a circle
+  xlim(c(1.5, 3.5)) +              # The xlim controls how "thick" the donut ring is
+  scale_fill_manual(values = motif_cols) +
+  theme_void()
+
+# pdf(paste0(out_dir,"libFL010_enhancer_motif_content.pdf"), width = 6, height = 5)
+# print(motif_plot)
+# dev.off()
+
+motif_plot
+
+
+print(TF_freq)
+
+
+```
+```{r}
+#calculate Rsquare and PCC
+fitlm = lm((log2FoldChange_rg)~(dev_log2FoldChange) , data = diff_exp)
+PCC <- cor((diff_exp$dev_log2FoldChange), diff_exp$log2FoldChange_rg, method = 'pearson', use = "complete.obs")
+
+p_dscp <- ggplot(diff_exp) + 
+  geom_point(aes(x = dev_log2FoldChange, y = log2FoldChange_rg), color = "grey34", alpha = 0.3) + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), linetype = "dashed") + 
+  #geom_abline(aes(intercept = 0, slope = 1), linetype = "dashed", color = "red") + 
+  ggtitle("BARe-seq library activity vs. STARR-seq E24") + 
+      labs(title = paste0("PCC = ", round(PCC, digits = 2)), 
+           subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))) + 
+      ylab("log2FC BARe-seq enhancer activity") + 
+      xlab("log2FC STARR-seq enhancer activity") + 
+  xlim(-3, 15) + 
+  ylim(-3,15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+
+p_dscp
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_pDSCP.pdf"), width = 5, height = 5)
+# print(p_dscp)
+# dev.off()
+
+#coloring in the different groups of oligos
+  # ggplot(diff_exp) + 
+  # geom_point(aes(x = dev_log2FoldChange, y = log2FoldChange_rg, color = Group), alpha = 0.3) + 
+  # geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), linetype = "dashed") + 
+  # #geom_abline(aes(intercept = 0, slope = 1), linetype = "dashed", color = "red") + 
+  # scale_color_manual(values = c("#1f77b4", "#1f77b4", "grey34", "darkgrey","darkgrey","darkgrey","darkgrey","darkgrey")) + 
+  # ggtitle("BARe-seq library activity vs. STARR-seq E24") + 
+  #     labs(title = paste0("PCC = ", round(PCC, digits = 2)), 
+  #          subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))) + 
+  #     ylab("log2FC BARe-seq enhancer activity") + 
+  #     xlab("log2FC STARR-seq enhancer activity") + 
+  # xlim(-3, 15) + 
+  # ylim(-3,15) + 
+  # coord_fixed() + 
+  # theme_classic(base_size = 15)
+
+```
+#plot other experiments as well
+```{r, echo = FALSE}
+#calculate Rsquare and PCC
+fitlm = lm((dev_log2FoldChange)~(log2FoldChange_p309) , data = diff_exp)
+PCC <- cor((diff_exp$log2FoldChange_p309), diff_exp$dev_log2FoldChange, method = 'pearson', use = "complete.obs")
+
+ggplot(diff_exp) + 
+  geom_point(aes(x = log2FoldChange_p309, y = dev_log2FoldChange, color = Group), alpha = 0.3) + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), linetype = "dashed") + 
+    scale_color_manual(values = c("#1f77b4", "#1f77b4", "grey34", "darkgrey","darkgrey","darkgrey","darkgrey","darkgrey")) + 
+  #geom_abline(aes(intercept = 0, slope = 1), linetype = "dashed", color = "red") + 
+  ggtitle("BARe-seq library activity vs. dev STARR-seq old") + 
+      labs(title = paste0("PCC = ", round(PCC, digits = 2)), 
+           subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))) + 
+      xlab("log2FC p309 E39 enhancer activity") + 
+      ylab("log2FC dev STARR enhancer activity") + 
+  xlim(-3, 15) + 
+  ylim(-3,15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+
+#calculate Rsquare and PCC
+fitlm = lm((hk_log2FoldChange)~(log2FoldChange_p309) , data = diff_exp)
+PCC <- cor((diff_exp$log2FoldChange_p309), diff_exp$hk_log2FoldChange, method = 'pearson', use = "complete.obs")
+
+p_309 <- ggplot(diff_exp) + 
+  geom_point(aes(x = log2FoldChange_p309, y = hk_log2FoldChange), alpha = 0.3, color = "grey34") + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), linetype = "dashed") + 
+    #scale_color_manual(values = c("#1f77b4", "#1f77b4", "grey34", "darkgrey","darkgrey","darkgrey","darkgrey","darkgrey")) + 
+  #geom_abline(aes(intercept = 0, slope = 1), linetype = "dashed", color = "red") + 
+  ggtitle("BARe-seq library activity vs. hk STARR-seq old") + 
+      labs(title = paste0("PCC = ", round(PCC, digits = 2)), 
+           subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))) + 
+      xlab("log2FC p309 E39 enhancer activity") + 
+      ylab("log2FC hk STARR enhancer activity") + 
+  xlim(-3, 15) + 
+  ylim(-3,15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+
+p_309
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_p309.pdf"), width = 5, height = 5)
+# print(p_309)
+# dev.off()
+
+#calculate Rsquare and PCC
+fitlm = lm((hk_log2FoldChange)~(log2FoldChange_p319) , data = diff_exp)
+PCC <- cor((diff_exp$log2FoldChange_p319), diff_exp$hk_log2FoldChange, method = 'pearson', use = "complete.obs")
+
+
+p_319 <- ggplot(diff_exp) + 
+  geom_point(aes(x = log2FoldChange_p319, y = hk_log2FoldChange), alpha = 0.3, color = "grey34") + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), linetype = "dashed") + 
+    #scale_color_manual(values = c("#1f77b4", "#1f77b4", "grey34", "darkgrey","darkgrey","darkgrey","darkgrey","darkgrey")) + 
+  #geom_abline(aes(intercept = 0, slope = 1), linetype = "dashed", color = "red") + 
+  ggtitle("BARe-seq library activity vs. hk STARR-seq old") + 
+      labs(title = paste0("PCC = ", round(PCC, digits = 2)), 
+           subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))) + 
+      xlab("log2FC p319 E39 enhancer activity") + 
+      ylab("log2FC hk STARR enhancer activity") + 
+  xlim(-3, 15) + 
+  ylim(-3,15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+
+p_319
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_p319.pdf"), width = 5, height = 5)
+# print(p_319)
+# dev.off()
+
+```
+
+
+```{r, echo = FALSE}
+
+p_mu <- param %>% filter(sample %in% sample_names) %>% 
+  ggplot() + 
+  geom_histogram(aes(x = log10(exp)), bins = 50) + 
+  geom_vline(aes(xintercept = log10(mu_threshold_nofilter)), 
+             colour = "red", linetype = "dashed") +
+  facet_wrap(~sample, ncol = 3) + 
+  theme_classic(base_size = 15)
+
+p_mu
+
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"STARR_samples_mu_threshold.pdf"), width = 6, height = 6)
+# print(p_mu)
+# dev.off()
+
+```
+# correlation of samples 
+
+```{r, echo = FALSE}
+
+data_list <- list(
+  "unfiltered" = param ,
+  "KS_pval_0.01" = param %>% filter(KS_pval > 0.01 ),
+  "mu_and_KSpval" = param %>% filter(KS_pval > 0.01 & high_mu == TRUE )
+)
+
+make_correlation_heatmap <- function(dt, feature, dataset_name, sample_reps = NULL) {
+  dt <- as.data.table(dt)
+  
+  if (!"sample" %in% names(dt)) stop("No 'sample' column found in data")
+  
+  # Just pull Seq_ID, sample, and the numerical feature
+  wide_dt <- dt[, .(
+    seq_ID,
+    sample_label = sample, 
+    value = as.numeric(get(feature))
+  )]
+  
+  # FILTER STEP: Keep only rows where 'sample_label' is in sample_reps
+  if (!is.null(sample_reps)) {
+    wide_dt <- wide_dt[sample_label %in% sample_reps]
+  }
+  
+  # Check if we still have data after filtering
+  if (nrow(wide_dt) == 0) {
+    warning(paste("No data left after filtering for sample_reps in dataset:", dataset_name))
+    return(NULL)
+  }
+  
+  # Reshape to wide format using the sample names
+  wide_dt <- dcast(wide_dt, seq_ID ~ sample_label, value.var = "value")
+  
+  mat <- as.matrix(wide_dt[, -1, with = FALSE])
+  storage.mode(mat) <- "numeric"
+  mat[mat <= 0] <- NA
+  mat <- log10(mat)
+  
+  mat <- mat[, colSums(is.finite(mat)) >= 2, drop = FALSE]
+  if (ncol(mat) < 2) return(NULL)
+  
+  cormat <- cor(mat, use = "pairwise.complete.obs", method = "pearson")
+  cormat_tbl <- as.data.frame(as.table(cormat))
+  colnames(cormat_tbl) <- c("Sample1", "Sample2", "Correlation")
+  
+  ggplot(cormat_tbl, aes(Sample1, Sample2, fill = Correlation)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(
+      low = "#4575b4", mid = "white", high = "#d73027",
+      midpoint = 0.5, limits = c(0, 1), na.value = "grey90"
+    ) +
+    geom_text(aes(label = ifelse(is.na(Correlation), "NA", sprintf("%.2f", Correlation))), size = 3) +
+    labs(title = paste0("Dataset: ", dataset_name, " | Feature: ", feature), x = "", y = "") +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          panel.grid = element_blank())
+}
+
+```
+
+```{r}
+features <- c("exp", "bfreq", "bsize")
+all_heatmaps <- list()
+sample_reps <- pooled_samples
+
+# Define your vector of samples to include
+# e.g., sample_reps <- c("libA_exp1_rep1", "libB_exp1_rep2", ...) 
+# Make sure this matches the formatting paste(sample, experiment, rep, sep = "_")
+
+for (dname in names(data_list)) {
+  cat("Processing dataset:", dname, "\n")
+  dt <- data_list[[dname]]
+  
+  for (f in features) {
+    # Generate the plot, passing the sample_reps vector
+    p <- make_correlation_heatmap(dt, f, dname, sample_reps = sample_reps)
+    
+    if (!is.null(p)) {
+      heatmap_name <- paste(dname, f, sep = "_")
+      all_heatmaps[[heatmap_name]] <- p
+      
+      # Save the plot automatically
+      file_path <- paste0(out_dir, "Heatmap_", heatmap_name, ".pdf")
+      ggsave(filename = file_path, plot = p, width = 5, height = 5, units = "in")
+    }
+  }
+}
+
+# Print them locally/to the console 
+for (nm in names(all_heatmaps)) {
+  print(all_heatmaps[[nm]])
+}
+
+```
+
+```{r}
+features <- c("exp", "bfreq", "bsize")
+all_heatmaps <- list()
+sample_reps <- sample_names[c(2,3,5,6,8,9)]
+
+# Define your vector of samples to include
+# e.g., sample_reps <- c("libA_exp1_rep1", "libB_exp1_rep2", ...) 
+# Make sure this matches the formatting paste(sample, experiment, rep, sep = "_")
+
+for (dname in names(data_list)) {
+  cat("Processing dataset:", dname, "\n")
+  dt <- data_list[[dname]]
+  
+  for (f in features) {
+    # Generate the plot, passing the sample_reps vector
+    p <- make_correlation_heatmap(dt, f, dname, sample_reps = sample_reps)
+    
+    if (!is.null(p)) {
+      heatmap_name <- paste(dname, f, sep = "_")
+      all_heatmaps[[heatmap_name]] <- p
+      
+      # Save the plot automatically
+      file_path <- paste0(out_dir, "Heatmap_all_", heatmap_name, ".pdf")
+      ggsave(filename = file_path, plot = p, width = 5, height = 5, units = "in")
+    }
+  }
+}
+
+# Print them locally/to the console 
+for (nm in names(all_heatmaps)) {
+  print(all_heatmaps[[nm]])
+}
+
+```
+
+##Multivariate analysis of enhancer motifs
+```{R, echo = FALSE}
+
+
+
+
+```
+
+##Meta analysis 
+```{R, echo = FALSE}
+
+
+
+
+```
+
+## motif PWM 
+```{R, echo = FALSE}
+data_30_annotated <- read.delim("/groups/stark/lorbeer/Burst_params_DG/Parameters_E57_v3/data_30_annotated_muKS.txt")
+
+
+
+```

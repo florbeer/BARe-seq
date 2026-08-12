@@ -1,0 +1,1508 @@
+---
+title: "promoter-BARe-seq for Figure 1"
+author: "FL"
+date: "2025-02-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(data.table)
+require(dplyr)
+require(ggplot2)
+require(readxl)
+library(ggrepel)
+require(patchwork)
+require(gridExtra)
+require(stringr)
+#require(scales)
+#library("cowplot")
+
+```
+
+## Data sets for Figure 1 
+R version 4.1.2 and Bioconductor 3.14
+```{r, echo = FALSE}
+#read in the different kinds of data sets required
+#annotation file used 
+anno <- read_xlsx("/groups/stark/lorbeer/BARE-seq_data_prep/Tables/Table4_promoter_library_annotations.xlsx")
+diff_exp_sub2$log2FoldChange_zfh1
+
+new_STAP <- fread("/groups/stark/lorbeer/STAP-TWIST/Franzi_STAP_TWIST_metadata-v2.txt")
+
+#differential expression data set 
+# code for generating STAP_diff_exp_E38_E28_combine.R
+diff_exp_sub2 <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/diff_exp_STAPexperiments.rds")
+#counts data sets
+#load all the counts for E28 and E38
+#counts were combined into tables and converted in script STAP_counts_E38_E28_combine.R
+count_data <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/raw_counts_E38_E28_aug.rds")
+final_result <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/counts_data_combined_E38_E28_annotated_augmented.rds")
+# raw_counts <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/raw_counts_E38_E28.rds")
+# final_result <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/counts_data_combined_E38_E28_annotated.rds")
+
+#burst parameter data sets 
+#script: STAP_pooled_data_prep_publication.R
+STAP_data_annotated <- readRDS("/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/STAP_data_annotated.rds")
+STAP_data_annotated[, c("lib","experiment","condition", "rep"):= tstrsplit(sample, "_", keep= c(1:4))]
+STAP_data_annotated$rep <- gsub("^r([1-3])$", "rep\\1", STAP_data_annotated$rep)
+
+#some samples have rep4, 5, 6 because of experimental reasons
+STAP_data_annotated[rep=="rep4"& condition == "e339", rep:= "rep1"]
+STAP_data_annotated[rep=="rep5"& condition == "e339", rep:= "rep2"]
+STAP_data_annotated[rep=="rep6"& condition == "e339", rep:= "rep3"]
+STAP_data_annotated[rep=="r1"& condition == "RT2", rep:= "rep1"]
+STAP_data_annotated[rep=="r2"& condition == "RT2", rep:= "rep2"]
+STAP_data_annotated[rep=="r3"& condition == "RT2", rep:= "rep3"]
+STAP_data_annotated[sample=="libFL008_E28_RT2_r1", sample:= "libFL008_E28_RT2_rep1"]
+STAP_data_annotated[sample=="libFL008_E28_RT2_r2", sample:= "libFL008_E28_RT2_rep2"]
+STAP_data_annotated[sample=="libFL008_E28_RT2_r3", sample:= "libFL008_E28_RT2_rep3"]
+
+count_data[sample=="libFL008_E28_RT2_r1", sample:= "libFL008_E28_RT2_rep1"]
+count_data[sample=="libFL008_E28_RT2_r2", sample:= "libFL008_E28_RT2_rep2"]
+count_data[sample=="libFL008_E28_RT2_r3", sample:= "libFL008_E28_RT2_rep3"]
+
+
+#read in mu thresholds 
+mu_thresholds <- read_xlsx("/groups/stark/lorbeer/Burst_params_DG/mu_thresholds_v2_Reyna.xlsx")
+STAP_data_annotated <- merge(STAP_data_annotated, mu_thresholds, by = c("sample", "experiment"), all.x = TRUE)
+
+head(STAP_data_annotated)
+sample_reps <- c("libFL008_E28_RT2_rep2", "libFL008_E28_RT2_rep3", #"libFL008_E38_dRT2_pair1", "libFL008_E38_dRT2_pair2", 
+                 "libFL016_E38_e325_rep1", "libFL016_E38_e325_rep2", "libFL017_E38_e339_rep5", "libFL017_E38_e339_rep6")
+pooled_samples <- c("libFL008_E28_RT2_pooledby2", #"libFL008_E38_dRT2_pool4", 
+                    "libFL016_E38_e325_pooledby2", "libFL017_E38_e339_pooledby2")
+
+```
+
+```{r, echo = FALSE}
+
+out_dir <- "/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/Fig1_April26/"
+
+```
+
+## Comparing the data with published STAP-seq data set 
+#plots for E28
+```{r, echo = FALSE}
+#calculate Rsquare and PCC
+fitlm = lm((log2FoldChange_RT2)~(log2FoldChange_zfh1) , data = diff_exp_sub2)
+PCC <- cor((diff_exp_sub2$log2FoldChange_zfh1), diff_exp_sub2$log2FoldChange_RT2, method = 'pearson', use = "complete.obs")
+
+
+ggplot(diff_exp_sub2) + 
+  geom_point(aes(x = log2FoldChange_zfh1, y = log2FoldChange_RT2), color = 'grey34', alpha = 0.3) + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), linetype = "dashed") + 
+  #geom_abline(aes(intercept = 0, slope = 1), linetype = "dashed", color = "red") + 
+  ggtitle("BARe-seq library activity vs. STAP-seq E28") + 
+      labs(title = paste0("PCC = ", round(PCC, digits = 2)), 
+           #subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))
+           ) + 
+      ylab("log2FC BARe-seq promoter activity") + 
+      xlab("log2FC STAP-seq promoter activity") + 
+  xlim(-3, 15) + 
+  ylim(-3,15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+
+
+```
+
+
+## comparison of the different enhancers used with E28 data 
+all turn out to be developmental class by previous definition 
+```{r, echo = FALSE, warning=FALSE}
+
+fitlm = lm((log2FoldChange_e325)~(log2FoldChange_zfh1) , data = diff_exp_sub2)
+PCC <- cor((diff_exp_sub2$log2FoldChange_zfh1), diff_exp_sub2$log2FoldChange_e325, method = 'pearson', use = "complete.obs")
+
+p_e325 <- diff_exp_sub2 %>% ggplot() + 
+  geom_point(aes(x = log2FoldChange_zfh1, y = log2FoldChange_e325), color = 'grey32', alpha = 0.3) + 
+  #scale_color_manual(values = c("#1f77b4", "darkorange", "midnightblue", "darkgrey","darkgrey")) + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), linetype = "dashed") + 
+  ggtitle("BARe-seq library activity vs. STAP-seq") + 
+      labs(title = paste0("PCC = ", round(PCC, digits = 2)), 
+           subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))) + 
+      ylab("log2FC e325") + 
+      xlab("log2FC STAP-seq promoter") + 
+  xlim(-3, 15) + 
+  ylim(-3,15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+p_e325
+#Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_e325.pdf"), width = 5, height = 5)
+# print(p_e325)
+# dev.off()
+
+fitlm = lm((log2FoldChange_e339)~(log2FoldChange_zfh1) , data = diff_exp_sub2)
+PCC <- cor((diff_exp_sub2$log2FoldChange_zfh1), diff_exp_sub2$log2FoldChange_e339, method = 'pearson', use = "complete.obs")
+
+p_e339 <- diff_exp_sub2 %>% ggplot() + 
+  geom_point(aes(x = log2FoldChange_zfh1, y = log2FoldChange_e339), color = 'grey32', alpha = 0.3) + 
+  #scale_color_manual(values = c("#1f77b4", "darkorange", "midnightblue", "darkgrey","darkgrey")) + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), linetype = "dashed") + 
+  ggtitle("BARe-seq library activity vs. STAP-seq") + 
+      labs(title = paste0("PCC = ", round(PCC, digits = 2)), 
+           subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))) + 
+      ylab("log2FC e339") + 
+      xlab("log2FC STAP-seq promoter") + 
+  xlim(-3, 15) + 
+  ylim(-3,15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+p_e339
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_e339.pdf"), width = 5, height = 5)
+# print(p_e339)
+# dev.off()
+```
+
+##Burst parameters overall assessment 
+
+```{r, echo = FALSE, warning=FALSE}
+
+p_mu <- STAP_data_annotated %>% filter(sample %in% c(sample_reps, pooled_samples)) %>% 
+  ggplot() + 
+  geom_histogram(aes(x = log10(exp)), bins = 50) + 
+  geom_vline(aes(xintercept = log10(mu_threshold_nofilter)), 
+             colour = "red", linetype = "dashed") +
+  facet_wrap(~sample, ncol = 3) + 
+  theme_classic(base_size = 15)
+
+STAP_data_annotated[, high_mu := exp >= mu_threshold_nofilter]
+
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"STAP_samples_mu_threshold.pdf"), width = 6, height = 6)
+# print(p_mu)
+# dev.off()
+
+p_mu_KS <- STAP_data_annotated %>% filter(sample %in% c(sample_reps, pooled_samples)) %>% filter(KS_pval > 0.01) %>%
+  ggplot() + 
+  geom_histogram(aes(x = log10(exp)), bins = 50) + 
+  geom_vline(aes(xintercept = log10(mu_threshold_nofilter)), 
+             colour = "red", linetype = "dashed") +
+  facet_wrap(~sample, ncol = 3) + 
+  theme_classic(base_size = 15)
+p_mu_KS
+
+```
+
+```{r, echo = FALSE, warning = FALSE}
+
+# Melt the log2FoldChange columns to long format
+diff_exp_long <- melt(as.data.table(diff_exp_sub2), 
+                      id.vars = c("oligo_id", "classification"),
+                      measure.vars = patterns("^log2FoldChange_"),
+                      variable.name = "condition", 
+                      value.name = "log2FoldChange")
+
+# Clean up the condition names (remove "log2FoldChange_" prefix)
+diff_exp_long[, condition := gsub("log2FoldChange_", "", condition)]
+colnames(diff_exp_long)[1] <- "seq_ID"
+
+STAP_annotated <- merge(STAP_data_annotated, diff_exp_long, by = c("condition", "seq_ID"), all.x = TRUE)
+#saveRDS(STAP_annotated, "/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/STAP_annotated_Fig1_compiled_v2.rds")
+
+```
+
+```{r, echo = FALSE}
+
+p_mu <- STAP_annotated %>% filter (sample %in% pooled_samples) %>% 
+  ggplot() + 
+  geom_point(aes( y= log2FoldChange, x = log10(exp), color = high_mu) , alpha = 0.5) + 
+  scale_color_manual(values = c("grey", "red")) + 
+  facet_wrap(~sample) + 
+    ggtitle("log2FC vs. log10(mu) colored by mu threshold") + 
+  theme_classic(base_size = 15)
+p_mu
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"STAP_muvlog2FC_mu_threshold.pdf"), width = 6, height = 3)
+# print(p_mu)
+# dev.off()
+
+p_KS <- STAP_annotated %>% filter (sample %in% pooled_samples) %>% 
+  mutate(KS_cutoff = if_else(KS_pval >0.01 ,TRUE,FALSE)) %>% 
+  ggplot() + 
+  geom_point(aes( y= log2FoldChange, x = log10(exp), color = KS_cutoff) , alpha = 0.5) + 
+    scale_color_manual(values = c("grey", "red")) + 
+  facet_wrap(~sample) + 
+    ggtitle("log2FC vs. log10(mu) colored by KS.pval ") + 
+  theme_classic(base_size = 15)
+p_KS 
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"STAP_muvlog2FC_KS_threshold.pdf"), width = 6, height = 3)
+# print(p_KS)
+# dev.off()
+
+p_mu_KS <- STAP_annotated %>% filter (sample %in% pooled_samples) %>% 
+  mutate(KS_cutoff = if_else(KS_pval >0.01 & high_mu ,TRUE,FALSE)) %>% 
+  ggplot() + 
+  geom_point(aes( y= log2FoldChange, x = log10(exp), color = KS_cutoff) , alpha = 0.5) + 
+    scale_color_manual(values = c("grey", "red")) + 
+  facet_wrap(~sample) + 
+    ggtitle("log2FC vs. log10(mu) colored by KS.pval & mu threshold") + 
+  theme_classic(base_size = 15)
+p_mu_KS 
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"STAP_muvlog2FC_muKS_threshold.pdf"), width = 6, height = 3)
+# print(p_mu_KS)
+# dev.off()
+
+#counting values 
+STAP_annotated %>% filter(rep == "rep2" & KS_pval >0.01 & condition == "RT2")
+STAP_annotated %>% filter(rep == "rep3" & KS_pval >0.01 & condition == "RT2")
+
+```
+```{r, echo = FALSE}
+
+summary_data <- count_data[, .(
+  mean_expression = mean(N),
+  total_expression = sum(N)
+), by = .(seq_ID, sample, library, experiment, enhancer, rep)]
+
+# Ensure STAP_annotated is a data.table
+setDT(STAP_annotated)
+
+# Define the columns you want to merge on. 
+# Note: I omitted 'enhancer' here assuming it might not be in STAP_annotated based on the output. 
+# If 'enhancer' is in STAP_annotated, add it to the 'by' vector!
+merge_cols <- c("seq_ID", "sample", "library", "experiment", "rep")
+
+# Merge the datasets (all.x = TRUE performs a left join)
+STAP_merged <- merge(
+  STAP_annotated, 
+  summary_data, 
+  by = merge_cols, 
+  all.x = TRUE 
+)
+
+# View the result
+head(STAP_merged)
+
+```
+
+```{r, echo = FALSE}
+
+# -------------------------------------------------------------
+# 1) Total expression vs. Mean expression (Faceted by sample)
+# -------------------------------------------------------------
+plot_expr <- STAP_merged %>% filter(sample %in% c("libFL008_E28_RT2_pooledby2")) %>% mutate(KS_cutoff = if_else(KS_pval >0.01 ,TRUE,FALSE)) %>% 
+  ggplot( aes(x = log2(mean_expression), y = log2(total_expression), color = KS_cutoff)) +
+  geom_point(alpha = 0.5, size = 1) +
+  facet_wrap(~ sample) +
+  theme_classic() +
+  labs(title = "Total vs. Mean Expression",
+       x = "log2( calculated Mean Expression)",
+       y = "log2(calcualted total Expression)")
+
+print(plot_expr)
+# pdf(paste0(out_dir,"mu_vs_log2FC_regression_KS_color.pdf"), width = 5, height = 5)
+# print(plot_expr)
+# dev.off()
+
+# -------------------------------------------------------------
+# 2) Mean expression vs. mu (Faceted by sample)
+# -------------------------------------------------------------
+# Note: If your actual mean value is stored in 'exp', change `x = mu` to `x = exp`
+plot_mu <- STAP_merged %>% filter(sample %in% c("libFL008_E28_RT2_pooledby2")) %>% mutate(KS_cutoff = if_else(KS_pval >0.01 ,TRUE,FALSE)) %>% 
+  ggplot( aes(x = log10(exp), y = log10(mean_expression), color = KS_cutoff)) +
+  geom_point(alpha = 0.5, size = 1) +
+  facet_wrap(~ sample) +
+  theme_classic() +
+  labs(title = "Mean Expression vs. Mu",
+       x = "Mu log10 - inferred",
+       y = "Mean Expression log10 - calculated")
+
+print(plot_mu)
+# pdf(paste0(out_dir,"mu_vs_inferred_mu_regression_KScolor.pdf"), width = 5, height = 5)
+# print(plot_mu)
+# dev.off()
+
+
+# -------------------------------------------------------------
+# 3) Total expression vs. log2FC (Faceted by sample)
+# -------------------------------------------------------------
+plot_lfc <- STAP_merged %>% filter(sample %in% c("libFL008_E28_RT2_pooledby2")) %>% mutate(KS_cutoff = if_else(KS_pval >0.01 ,TRUE,FALSE)) %>% 
+  ggplot(aes(x = log2FoldChange, y = log2(total_expression), color = KS_cutoff)) +
+  geom_point(alpha = 0.5, size = 1) +
+  facet_wrap(~ sample) +
+  theme_classic() +
+  labs(title = "Total Expression vs. log2FoldChange",
+       x = "log2FoldChange",
+       y = "log2(Total Expression)")
+
+print(plot_lfc)
+
+#Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_total_exp_correlation_KScolor.pdf"), width = 5, height = 5)
+# print(plot_lfc)
+# dev.off()
+
+```
+
+
+```{r, echo = FALSE}
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+# Prepare the data once
+plot_data <- STAP_merged %>% 
+  filter(sample %in% c("libFL008_E28_RT2_pooledby2")) %>% 
+  mutate(
+    KS_cutoff = if_else(KS_pval > 0.01, TRUE, FALSE),
+    Highlight = if_else(KS_cutoff == TRUE & high_mu == TRUE, TRUE, FALSE)
+  )
+
+# 1) Total expression vs. Mean expression
+plot_expr <- ggplot(plot_data, aes(x = log2(mean_expression), y = log2(total_expression), color = Highlight)) +
+  geom_point(alpha = 0.5, size = 1) +
+  scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "firebrick")) +
+  facet_wrap(~ sample) +
+  theme_classic() +
+  labs(title = "Total vs. Mean Expression", x = "log2( calculated Mean Expression )", y = "log2( calculated total Expression )")
+print(plot_expr)
+
+# 2) Mean expression vs. mu
+plot_mu <- ggplot(plot_data, aes(x = log10(exp), y = log10(mean_expression), color = Highlight)) +
+  geom_point(alpha = 0.5, size = 1) +
+  scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "firebrick")) +
+  facet_wrap(~ sample) +
+  theme_classic() +
+  labs(title = "Mean Expression vs. Mu", x = "Mu log10 - inferred", y = "Mean Expression log10 - calculated")
+print(plot_mu)
+
+# 3) Total expression vs. log2FC
+plot_lfc <- ggplot(plot_data, aes(x = log2FoldChange, y = log2(total_expression), color = Highlight)) +
+  geom_point(alpha = 0.5, size = 1) +
+  scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "firebrick")) +
+  facet_wrap(~ sample) +
+  theme_classic() +
+  labs(title = "Total Expression vs. log2FoldChange", x = "log2FoldChange", y = "log2(Total Expression)")
+print(plot_lfc)
+
+```
+
+```{r, echo = FALSE}
+# 1) Total expression vs. Mean expression (with Regression & Pearson's R)
+plot_expr_reg <- ggplot(plot_data, aes(x = log2(mean_expression), y = log2(total_expression), color = Highlight)) +
+  geom_point(alpha = 0.5, size = 1) +
+  scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "firebrick")) +
+  geom_smooth(data = filter(plot_data, Highlight == TRUE), method = "lm", color = "firebrick") +
+  stat_cor(data = filter(plot_data, Highlight == TRUE), aes(label = after_stat(r.label)), color = "black", label.x.npc = "left", label.y.npc = "top") +
+  facet_wrap(~ sample) +
+  theme_classic() +
+  labs(title = "Total vs. Mean Expression (Target Regression)", 
+       x = "log2( calculated Mean Expression )", 
+       y = "log2( calculated total Expression )")
+
+print(plot_expr_reg)
+# 
+# pdf(paste0(out_dir,"mu_vs_log2FC_regression.pdf"), width = 5, height = 5)
+# print(plot_expr_reg)
+# dev.off()
+
+# 2) Mean expression vs. mu (with Regression & Pearson's R)
+plot_mu_reg <- ggplot(plot_data, aes(x = log10(exp), y = log10(mean_expression), color = Highlight)) +
+  geom_point(alpha = 0.5, size = 1) +
+  scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "firebrick")) +
+  geom_smooth(data = filter(plot_data, Highlight == TRUE), method = "lm", color = "firebrick") +
+  stat_cor(data = filter(plot_data, Highlight == TRUE), aes(label = after_stat(r.label)), color = "black", label.x.npc = "left", label.y.npc = "top") +
+  facet_wrap(~ sample) +
+  theme_classic() +
+  labs(title = "Mean Expression vs. Mu (Target Regression)", 
+       x = "Mu log10 - inferred", 
+       y = "Mean Expression log10 - calculated")
+
+print(plot_mu_reg)
+
+# pdf(paste0(out_dir,"mu_vs_inferred_mu_regression.pdf"), width = 5, height = 5)
+# print(plot_mu_reg)
+# dev.off()
+
+# 3) Total expression vs. log2FC (with Regression & Pearson's R)
+plot_lfc_reg <- ggplot(plot_data, aes(x = log2FoldChange, y = log2(total_expression), color = Highlight)) +
+  geom_point(alpha = 0.5, size = 1) +
+  scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "firebrick")) +
+  geom_smooth(data = filter(plot_data, Highlight == TRUE), method = "lm", color = "firebrick") +
+  stat_cor(data = filter(plot_data, Highlight == TRUE), aes(label = after_stat(r.label)), color = "black", label.x.npc = "left", label.y.npc = "top") +
+  facet_wrap(~ sample) +
+  theme_classic() +
+  labs(title = "Total Expression vs. log2FoldChange (Target Regression)", 
+       x = "log2FoldChange", 
+       y = "log2(Total Expression)")
+
+print(plot_lfc_reg)
+
+#Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_total_exp_correlation.pdf"), width = 5, height = 5)
+# print(plot_lfc_reg)
+# dev.off()
+
+
+```
+
+
+
+```{r, echo = FALSE}
+#calculate Rsquare and PCC
+fitlm = lm((log2FoldChange_RT2)~(log2FoldChange_zfh1) , data = diff_exp_sub2)
+PCC <- cor((diff_exp_sub2$log2FoldChange_zfh1), diff_exp_sub2$log2FoldChange_RT2, method = 'pearson', use = "complete.obs")
+
+diff_exp_sub2 <- merge(diff_exp_sub2, STAP_annotated[, c("condition", "rep","seq_ID", "KS_pval", "high_mu"), with = FALSE], all.x = TRUE, by.x = "oligo_id", by.y = "seq_ID")
+
+p_color <- diff_exp_sub2 %>% 
+  mutate(KS_cutoff = if_else(KS_pval >0.01 & high_mu == TRUE,TRUE,FALSE)) %>% 
+filter(
+    !is.na(KS_cutoff),
+    !is.na(log2FoldChange_zfh1),
+    !is.na(log2FoldChange_RT2)
+  ) %>%
+  ggplot() + 
+  geom_point(aes(x = log2FoldChange_zfh1, y = log2FoldChange_RT2, color = KS_cutoff),alpha = 0.3) + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), linetype = "dashed") + 
+      scale_color_manual(values = c("grey", "red", "grey")) + 
+  #geom_abline(aes(intercept = 0, slope = 1), linetype = "dashed", color = "red") + 
+  ggtitle("BARe-seq library activity vs. STAP-seq E28") + 
+      labs(title = paste0("PCC = ", round(PCC, digits = 2)), 
+           #subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))
+           ) + 
+      ylab("log2FC BARe-seq promoter activity") + 
+      xlab("log2FC STAP-seq promoter activity") + 
+  #xlim(-3, 15) + 
+  #ylim(-3,15) + 
+  #coord_fixed() + 
+  coord_fixed(xlim = c(-3, 15), ylim = c(-3, 15)) +
+  theme_classic(base_size = 15)
+p_color
+
+#Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_RT2_KS_pval_mu.pdf"), width = 5, height = 5)
+# print(p_color)
+# dev.off()
+
+```
+
+
+## pairwise comparisons 
+```{r}
+# List of filtered datasets and their labels
+data_list <- list(
+  "unfiltered" = STAP_annotated ,
+  "KS_pval_0.01" = STAP_annotated %>% filter(KS_pval > 0.01 ),
+  "mu_and_KSpval" = STAP_annotated %>% filter(KS_pval > 0.01 & high_mu == TRUE )
+)
+
+#list of comparisons to make
+comparisons <- list(
+                    h5 = c("libFL008_E28_RT2_rep2", "libFL008_E28_RT2_rep3")#, 
+                    )
+
+```
+
+```{r, echo = FALSE}
+replicate_comparison <- function(comp, data, dataset_name = "") {
+  e1 <- strsplit(comp[1], "_")[[1]][2]
+  l1 <- strsplit(comp[1], "_")[[1]][1]
+  r1 <- strsplit(comp[1], "_")[[1]][4]
+
+  e2 <- strsplit(comp[2], "_")[[1]][2]
+  l2 <- strsplit(comp[2], "_")[[1]][1]
+  r2 <- strsplit(comp[2], "_")[[1]][4]
+
+  d1 <- as.data.table(data)[experiment == e1 & lib == l1 & rep == r1,
+                            c("bsize", "bfreq", "exp", "seq_ID")]
+  colnames(d1)[1:3] <- paste(colnames(d1)[1:3], e1, l1, r1, sep = "_")
+
+  d2 <- as.data.table(data)[experiment == e2 & lib == l2 & rep == r2,
+                            c("bsize", "bfreq", "exp", "seq_ID")]
+  colnames(d2)[1:3] <- paste(colnames(d2)[1:3], e2, l2, r2, sep = "_")
+
+  cast <- merge(d1, d2, by = "seq_ID", allow.cartesian = TRUE)
+
+  if (nrow(cast) == 0) {
+    warning(paste("No data overlap for comparison:", comp[1], "vs", comp[2], "in dataset:", dataset_name))
+    return(NULL)
+  }
+
+  x.size <- paste("bsize", e1, l1, r1, sep = "_")
+  y.size <- paste("bsize", e2, l2, r2, sep = "_")
+
+  df_size <- data.frame(
+    x = log10(cast[[x.size]]),
+    y = log10(cast[[y.size]])
+  )
+  df_size <- df_size[is.finite(df_size$x) & is.finite(df_size$y), ]
+  if (nrow(df_size) < 2) return(NULL)
+
+  fitlm <- lm(y ~ x, data = df_size)
+  PCC <- cor(df_size$x, df_size$y, method = "pearson", use = "complete.obs")
+
+  size <- ggplot(df_size, aes(x = x, y = y)) +
+    geom_point(alpha = 0.2) +
+    #geom_abline(intercept = coef(fitlm)[1], slope = coef(fitlm)[2],
+    #            linetype = "dashed", color = "red") +
+    geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "red", linetype = "dashed") + 
+    geom_abline(intercept = 0, slope = 1,
+                linetype = "dashed", color = "darkgrey") +
+    coord_cartesian(xlim = c(-1.5, 1.5), ylim = c(-1.5, 1.5)) +
+    labs(
+      title = paste0("Burst size (Dataset: ", dataset_name, ")"),
+      subtitle = paste0(comp[1], " vs ", comp[2],
+                        "\nPCC = ", round(PCC, 2),
+                        "   R² = ", round(summary(fitlm)$r.squared, 2)),
+      x = paste0("log10(burst_size_", comp[1], ")"),
+      y = paste0("log10(burst_size_", comp[2], ")")
+    ) +
+    theme_classic()
+
+  x.freq <- paste("bfreq", e1, l1, r1, sep = "_")
+  y.freq <- paste("bfreq", e2, l2, r2, sep = "_")
+
+  df_freq <- data.frame(
+    x = log10(cast[[x.freq]]),
+    y = log10(cast[[y.freq]])
+  )
+  df_freq <- df_freq[is.finite(df_freq$x) & is.finite(df_freq$y), ]
+  if (nrow(df_freq) < 2) return(NULL)
+
+  fitlm_freq <- lm(y ~ x, data = df_freq)
+  PCC_freq <- cor(df_freq$x, df_freq$y, method = "pearson", use = "complete.obs")
+
+  freq <- ggplot(df_freq, aes(x = x, y = y)) +
+    geom_point(alpha = 0.2) +
+    #geom_abline(intercept = coef(fitlm_freq)[1], slope = coef(fitlm_freq)[2],
+    #            linetype = "dashed", color = "red") +
+    geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "red", linetype = "dashed") + 
+    geom_abline(intercept = 0, slope = 1,
+                linetype = "dashed", color = "darkgrey") +
+    coord_cartesian(xlim = c(-2, 0.5), ylim = c(-2, 0.5)) +
+    labs(
+      title = paste0("Burst frequency (Dataset: ", dataset_name, ")"),
+      subtitle = paste0(comp[1], " vs ", comp[2],
+                        "\nPCC = ", round(PCC_freq, 2),
+                        "   R² = ", round(summary(fitlm_freq)$r.squared, 2)),
+      x = paste0("log10(burst_freq_", comp[1], ")"),
+      y = paste0("log10(burst_freq_", comp[2], ")")
+    ) +
+    theme_classic()
+
+  x.exp <- paste("exp", e1, l1, r1, sep = "_")
+  y.exp <- paste("exp", e2, l2, r2, sep = "_")
+
+  df_exp <- data.frame(
+    x = log10(cast[[x.exp]]),
+    y = log10(cast[[y.exp]])
+  )
+  df_exp <- df_exp[is.finite(df_exp$x) & is.finite(df_exp$y), ]
+  if (nrow(df_exp) < 2) return(NULL)
+
+  fitlm_exp <- lm(y ~ x, data = df_exp)
+  PCC_exp <- cor(df_exp$x, df_exp$y, method = "pearson", use = "complete.obs")
+
+  exp_plot <- ggplot(df_exp, aes(x = x, y = y)) +
+    geom_point(alpha = 0.2) +
+    #geom_abline(intercept = coef(fitlm_exp)[1], slope = coef(fitlm_exp)[2],
+    #            linetype = "dashed", color = "red") +
+    geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "red", linetype = "dashed") + 
+    geom_abline(intercept = 0, slope = 1,
+                linetype = "dashed", color = "darkgrey") +
+    coord_cartesian(xlim = c(-1.5, 1.5), ylim = c(-1.5, 1.5)) +
+    labs(
+      title = paste0("Expression (Dataset: ", dataset_name, ")"),
+      subtitle = paste0(comp[1], " vs ", comp[2],
+                        "\nPCC = ", round(PCC_exp, 2),
+                        "   R² = ", round(summary(fitlm_exp)$r.squared, 2)),
+      x = paste0("log10(exp_", comp[1], ")"),
+      y = paste0("log10(exp_", comp[2], ")")
+    ) +
+    theme_classic()
+
+  list(
+    freq = freq,
+    size = size,
+    exp = exp_plot
+  )
+}
+
+# Function to process and save plots for each dataset
+process_and_save_plots <- function(data, name, comparisons) {
+  test <- lapply(comparisons, function(comp) {
+    replicate_comparison(comp, data, dataset_name = name)
+  })
+
+  pdf_filename <- paste0(out_dir,"Comparisons_", name, ".pdf")
+  pdf(pdf_filename, width = 4, height = 4)
+
+  for (res in test) {
+    if (!is.null(res)) {
+      print(res$freq)
+      print(res$size)
+      print(res$exp)
+    }
+  }
+
+  dev.off()
+  return(test)
+}
+
+
+
+```
+
+```{r}
+results <- Map(function(data, name) {
+  message(paste("Processing dataset:", name))
+  process_and_save_plots(data, name, comparisons)
+},
+data_list,
+names(data_list))
+
+
+for (dname in names(data_list)) {
+  cat("## Dataset:", dname, "\n\n")
+  
+  for (cname in names(comparisons)) {
+    cat("### Comparison:", cname, "\n\n")
+    
+    plots <- replicate_comparison(
+      comparisons[[cname]],
+      data_list[[dname]],
+      dataset_name = dname
+    )
+    
+    if (!is.null(plots)) {
+      print(plots$freq)
+      print(plots$size)
+      print(plots$exp)
+    }
+  }
+}
+
+```
+
+
+
+```{r, echo = FALSE}
+
+make_correlation_heatmap <- function(dt, feature, dataset_name, sample_reps = NULL) {
+  dt <- as.data.table(dt)
+  
+  if (!"sample" %in% names(dt)) stop("No 'sample' column found in data")
+  
+  # Just pull Seq_ID, sample, and the numerical feature
+  wide_dt <- dt[, .(
+    seq_ID,
+    sample_label = sample, 
+    value = as.numeric(get(feature))
+  )]
+  
+  # FILTER STEP: Keep only rows where 'sample_label' is in sample_reps
+  if (!is.null(sample_reps)) {
+    wide_dt <- wide_dt[sample_label %in% sample_reps]
+  }
+  
+  # Check if we still have data after filtering
+  if (nrow(wide_dt) == 0) {
+    warning(paste("No data left after filtering for sample_reps in dataset:", dataset_name))
+    return(NULL)
+  }
+  
+  # Reshape to wide format using the sample names
+  wide_dt <- dcast(wide_dt, seq_ID ~ sample_label, value.var = "value")
+  
+  mat <- as.matrix(wide_dt[, -1, with = FALSE])
+  storage.mode(mat) <- "numeric"
+  mat[mat <= 0] <- NA
+  mat <- log10(mat)
+  
+  mat <- mat[, colSums(is.finite(mat)) >= 2, drop = FALSE]
+  if (ncol(mat) < 2) return(NULL)
+  
+  cormat <- cor(mat, use = "pairwise.complete.obs", method = "pearson")
+  cormat_tbl <- as.data.frame(as.table(cormat))
+  colnames(cormat_tbl) <- c("Sample1", "Sample2", "Correlation")
+  
+  ggplot(cormat_tbl, aes(Sample1, Sample2, fill = Correlation)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(
+      low = "#4575b4", mid = "white", high = "#d73027",
+      midpoint = 0.5, limits = c(0, 1), na.value = "grey90"
+    ) +
+    geom_text(aes(label = ifelse(is.na(Correlation), "NA", sprintf("%.2f", Correlation))), size = 3) +
+    labs(title = paste0("Dataset: ", dataset_name, " | Feature: ", feature), x = "", y = "") +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          panel.grid = element_blank())
+}
+
+```
+
+```{r}
+features <- c("exp", "bfreq", "bsize")
+all_heatmaps <- list()
+
+# Define your vector of samples to include
+# e.g., sample_reps <- c("libA_exp1_rep1", "libB_exp1_rep2", ...) 
+# Make sure this matches the formatting paste(sample, experiment, rep, sep = "_")
+
+for (dname in names(data_list)) {
+  cat("Processing dataset:", dname, "\n")
+  dt <- data_list[[dname]]
+  
+  for (f in features) {
+    # Generate the plot, passing the sample_reps vector
+    p <- make_correlation_heatmap(dt, f, dname, sample_reps = sample_reps)
+    
+    if (!is.null(p)) {
+      heatmap_name <- paste(dname, f, sep = "_")
+      all_heatmaps[[heatmap_name]] <- p
+      
+      # Save the plot automatically
+      file_path <- paste0(out_dir, "Heatmap_", heatmap_name, ".pdf")
+      ggsave(filename = file_path, plot = p, width = 5, height = 5, units = "in")
+    }
+  }
+}
+
+# Print them locally/to the console 
+for (nm in names(all_heatmaps)) {
+  print(all_heatmaps[[nm]])
+}
+
+```
+
+
+##looking at examples 
+
+```{r, echo = FALSE}
+diff_exp_sub2 %>% filter() %>% 
+  ggplot() + 
+  geom_histogram(aes(x = log2FoldChange_RT2),bins = 50) + 
+  theme_classic(base_size = 15)
+
+STAP_annotated <- STAP_annotated %>% 
+  mutate(log2_class = ifelse(between(log2FoldChange, 5, 7.5), "low", 
+                      ifelse(between(log2FoldChange, 7.5, 10), "mid", 
+                      ifelse(between(log2FoldChange, 10, 12.5), "high", "too_low"))))
+
+#similar exp
+oligo_low <- unique(STAP_annotated[which(STAP_annotated$log2_class == "low" & STAP_annotated$condition == "RT2" & STAP_annotated$filter1 == TRUE & STAP_annotated$filter2 == TRUE & STAP_annotated$full_prec2 == TRUE),]$seq_ID)
+oligo_mid <- unique(STAP_annotated[which(STAP_annotated$log2_class == "mid" & STAP_annotated$condition == "RT2" & STAP_annotated$filter1 == TRUE & STAP_annotated$filter2 == TRUE & STAP_annotated$full_prec2 == TRUE),]$seq_ID)
+oligo_high <- unique(STAP_annotated[which(STAP_annotated$log2_class == "high" & STAP_annotated$condition == "RT2" & STAP_annotated$filter1 == TRUE & STAP_annotated$filter2 == TRUE & STAP_annotated$full_prec2 == TRUE),]$seq_ID)
+
+#diff_exp_long <- merge(diff_exp_long, new_STAP, by.x = "seq_ID", by.y = "oligo_id", all.x = TRUE)
+
+#ftz chr3R_2689979_2690112_+ (in data set!)
+#gt chrX_2322929_2323062_-
+
+oligo_TATA <- c("chr2R_8592612_8592745_+", "chr3L_21375536_21375669_+", "chr3R_14061849_14061982_+", "chr3R_9916429_9916562_+")
+#chr2R_8592612_8592745_+ = CG42663
+# chr3L_21375536_21375669_+ = rgn 
+# chr3R_14061849_14061982_+ = repo
+# chr3R_9916429_9916562_+ = FBgn0038198 Npc2b
+
+#more examples from high 
+#Inr DPE
+Inr_DPE <- c("chrX_16615373_16615506_-", "chr3R_9809016_9809149_-", "chr2R_8592612_8592745_+")
+
+#DPE
+DPE <- c("chrX_18428631_18428764_+", "chrX_16615373_16615506_-", "chr3R_9809016_9809149_-")
+
+#Inr Ebox
+c("chrX_1930426_1930559_-")
+
+#Inr
+c("chrX_13298723_13298856_+")
+#TATAInr
+c("chr3R_9916429_9916562_+")
+
+#TATA examples from high 
+TATA <- c("chrX_9556722_9556855_-", "chrX_6173234_6173367_-", "chrX_14970176_14970309_-", "chr3R_9916429_9916562_+")
+
+FISH <- c("chr2L_15762688_15762821_-", "chr2L_1737402_1737535_+", "chr2L_21629861_21629994_-", "chr2R_8592612_8592745_+", "chr3L_21375536_21375669_+", "chr3R_14061849_14061982_+", "Dscp_promoter_synthetic_+")
+
+#write.table(STAP_annotated,"/groups/stark/lorbeer/Burst_params_DG/STAP_March2025_pools/STAP_data_annotated_log2FC.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+```
+
+## Reyna fits
+
+```{r, echo = FALSE, fig.width = 12,warning = FALSE, message = FALSE}
+
+#Given two sequences, each one with:
+#mu (expression)
+#r parameter
+#UMI counts
+#Which ca be respectively annotated into the following objects:
+#mu_n1, r_n1, x1 (for sequence 1)
+#mu_n2, r_n2, x2 (for sequence 2)
+
+prom1 <- "chr2R_8592612_8592745_+"
+prom2 <- TATA[1]
+
+#Function for computing the densities of the 0 truncate negative binomial:
+d0T_NB <- function(x, mu, size){
+  dnbinom(x, mu=mu, size=size)/(1-dnbinom(0, mu=mu, size=size))
+}
+
+x1 <- count_data %>%
+  filter(sample == "libFL008_E28_RT2_r2" & seq_ID == prom1) %>%
+  pull(N)
+x2 <- count_data %>%
+  filter(sample == "libFL008_E28_RT2_r2" & seq_ID == prom2) %>%
+  pull(N)
+
+
+mu_n1 <- STAP_annotated %>% filter(sample == "libFL008_E28_RT2_rep2" & seq_ID == prom1) %>% pull(exp)
+r_n1 <- STAP_annotated %>% filter(sample == "libFL008_E28_RT2_rep2" & seq_ID == prom1) %>% pull(bfreq)
+
+
+mu_n2 <- STAP_annotated %>% filter(sample == "libFL008_E28_RT2_rep2" & seq_ID == prom2) %>% pull(exp)
+r_n2 <- STAP_annotated %>% filter(sample == "libFL008_E28_RT2_rep2" & seq_ID == prom2) %>% pull(bfreq)
+
+
+xr <- 1:max(c(x1, x2))
+
+d1 <- data.frame(
+  x = xr,
+  density = d0T_NB(xr, mu = mu_n1, size = r_n1),
+  sample = prom1
+)
+
+d2 <- data.frame(
+  x = xr,
+  density = d0T_NB(xr, mu = mu_n2, size = r_n2),
+  sample = prom2
+)
+
+densities <- rbind(d1, d2)
+
+# build a tidy frame 
+obs <- bind_rows(
+  data.frame(N = x1, sample = prom1),
+  data.frame(N = x2, sample = prom2)
+)
+
+p <- ggplot(obs, aes(x = N, fill = sample)) +
+  geom_histogram(aes(y = after_stat(density)), 
+                 position = "identity", alpha = 0.4, binwidth = 1) +
+  geom_line(data = densities, aes(x = x, y = density, colour = sample)) +
+  scale_fill_manual(values = c("goldenrod2", "darkcyan")) +
+  scale_colour_manual(values = c("goldenrod2", "darkcyan")) +
+    xlim(0,50) + 
+  ylim(0,0.35) + 
+  labs(x = "transcript/plasmid", y = "Relative frequency",
+       title = "Observed vs. 0-truncated NB fit in rep2") +
+  theme_classic(base_size = 15)
+
+x3 <- count_data %>%
+  filter(sample == "libFL008_E28_RT2_r3" & seq_ID == prom1) %>%
+  pull(N)
+x4 <- count_data %>%
+  filter(sample == "libFL008_E28_RT2_r3" & seq_ID == prom2) %>%
+  pull(N)
+
+mu_n3 <- STAP_annotated %>% filter(sample == "libFL008_E28_RT2_rep3" & seq_ID == prom1) %>% pull(exp)
+r_n3 <- STAP_annotated %>% filter(sample == "libFL008_E28_RT2_rep3" & seq_ID == prom1) %>% pull(bfreq)
+
+mu_n4 <- STAP_annotated %>% filter(sample == "libFL008_E28_RT2_rep3" & seq_ID == prom2) %>% pull(exp)
+r_n4 <- STAP_annotated %>% filter(sample == "libFL008_E28_RT2_rep3" & seq_ID == prom2) %>% pull(bfreq)
+
+xr2 <- 1:max(c(x1, x2))
+
+d3 <- data.frame(
+  x = xr,
+  density = d0T_NB(xr, mu = mu_n3, size = r_n3),
+  sample = prom1
+)
+
+d4 <- data.frame(
+  x = xr,
+  density = d0T_NB(xr, mu = mu_n4, size = r_n4),
+  sample = prom2
+)
+
+densities2 <- rbind(d3, d4)
+
+# build a tidy frame 
+obs2 <- bind_rows(
+  data.frame(N = x3, sample = prom1),
+  data.frame(N = x4, sample = prom2)
+)
+q<- ggplot(obs2, aes(x = N, fill = sample)) +
+  geom_histogram(aes(y = after_stat(density)), 
+                 position = "identity", alpha = 0.4, binwidth = 1) +
+  geom_line(data = densities2, aes(x = x, y = density, colour = sample)) +
+  scale_fill_manual(values = c("goldenrod2", "darkcyan")) +
+  scale_colour_manual(values = c("goldenrod2", "darkcyan")) +
+  labs(x = "transcript/plasmid", y = "Relative frequency",
+       title = "Observed vs. 0-truncated NB fit in rep3") +
+  xlim(0,50) + 
+  ylim(0,0.35) + 
+  theme_classic(base_size = 15)
+
+grid.arrange(p, q)
+
+
+#comparison of same 
+d5 <- data.frame(
+  x = xr,
+  density = d0T_NB(xr, mu = mu_n1, size = r_n1),
+  sample = "rep2"
+)
+
+d6 <- data.frame(
+  x = xr,
+  density = d0T_NB(xr, mu = mu_n2, size = r_n2),
+  sample = "rep2"
+)
+d7 <- data.frame(
+  x = xr,
+  density = d0T_NB(xr, mu = mu_n3, size = r_n3),
+  sample = "rep3"
+)
+
+d8 <- data.frame(
+  x = xr,
+  density = d0T_NB(xr, mu = mu_n4, size = r_n4),
+  sample = "rep3"
+)
+
+densities3 <- rbind(d5, d7)
+densities4 <- rbind(d6, d8)
+
+# build a tidy frame 
+obs3 <- bind_rows(
+  data.frame(N = x1, sample = "rep2"),
+  data.frame(N = x3, sample = "rep3")
+)
+
+obs4 <- bind_rows(
+  data.frame(N = x2, sample = "rep2"),
+  data.frame(N = x4, sample = "rep3")
+)
+
+p1 <- ggplot(obs3, aes(x = N, fill = sample)) +
+  geom_histogram(aes(y = after_stat(density)), 
+                 position = "identity", alpha = 0.4, binwidth = 1) +
+  geom_line(data = densities3, aes(x = x, y = density, colour = sample)) +
+  scale_fill_manual(values = c("goldenrod2", "goldenrod4")) +
+  scale_colour_manual(values = c("goldenrod2", "goldenrod4")) +
+    xlim(0,50) + 
+  ylim(0,0.35) + 
+  labs(x = "transcript/plasmid", y = "Relative frequency",
+       title = "chr2R_8592612_8592745_+ DPE") +
+  theme_classic(base_size = 15)
+
+q1 <- ggplot(obs4, aes(x = N, fill = sample)) +
+  geom_histogram(aes(y = after_stat(density)), 
+                 position = "identity", alpha = 0.4, binwidth = 1) +
+  geom_line(data = densities4, aes(x = x, y = density, colour = sample)) +
+  scale_fill_manual(values = c("cyan2", "darkcyan")) +
+  scale_colour_manual(values = c("cyan2", "darkcyan")) +
+  labs(x = "transcript/plasmid", y = "Relative frequency",
+       title = "chrX_9556722_9556855_- TATA") +
+  xlim(0,50) + 
+  ylim(0,0.35) + 
+  theme_classic(base_size = 15)
+
+grid.arrange(p,p1, q, q1, layout_matrix = cbind(c(1,3), c(1,3), c(2,4)))
+
+# Save to PDF
+# ggsave(
+#   filename = paste0(out_dir, "Histogram_comparison_TATA-noTATA_E28_v1.pdf"),
+#   plot = grid.arrange(p,p1, q, q1, layout_matrix = cbind(c(1,3), c(1,3), c(2,4))),
+#   width = 12, height = 8, units = "in"  # adjust size as needed
+# )
+
+```
+#make the plots for more sequences and more samples
+```{r, echo = FALSE}
+
+plot_nb_fit_facets <- function(count_data, stap_data, seq_ids, samples, 
+                              sample_labels = NULL) {
+  
+  # Default labels if not provided
+  if (is.null(sample_labels)) {
+    sample_labels <- samples
+  }
+  
+  # Check inputs
+  if (length(sample_labels) != length(samples)) {
+    stop("sample_labels must have same length as samples")
+  }
+  
+  # Function for computing the densities of the 0 truncate negative binomial
+  d0T_NB <- function(x, mu, size){
+    dnbinom(x, mu=mu, size=size)/(1-dnbinom(0, mu=mu, size=size))
+  }
+  
+  # Storage for all plots
+  plot_list <- list()
+  
+  for (seq_id in seq_ids) {
+    
+    # Storage for this sequence
+    all_obs <- list()
+    all_densities <- list()
+    all_params <- list()
+    
+    # Process each sample
+    for (i in seq_along(samples)) {
+      
+      # Extract UMI counts
+      x <- count_data %>%
+        filter(sample == samples[i] & seq_ID == seq_id) %>%
+        pull(N)
+      
+      # Skip if no data
+      if (length(x) == 0) {
+        warning(paste("No data found for", seq_id, "in sample", samples[i]))
+        next
+      }
+      
+      # Extract parameters from STAP_annotated
+      # Convert sample name format (r2 -> rep2, etc.)
+      stap_sample <- gsub("_r(\\d+)$", "_rep\\1", samples[i])
+      
+      mu_n <- stap_data %>% 
+        filter(sample == stap_sample & seq_ID == seq_id) %>% 
+        pull(exp)
+      r_n <- stap_data %>% 
+        filter(sample == stap_sample & seq_ID == seq_id) %>% 
+        pull(bfreq)
+      
+      # Skip if parameters not found
+      if (length(mu_n) == 0 || length(r_n) == 0) {
+        warning(paste("Parameters not found for", seq_id, "in sample", samples[i]))
+        next
+      }
+      
+      # Store observed data
+      all_obs[[i]] <- data.frame(
+        N = x, 
+        sample = sample_labels[i],
+        sample_order = i  # for consistent ordering
+      )
+      
+      # Create density curve
+      xr <- 1:max(x)
+      all_densities[[i]] <- data.frame(
+        x = xr,
+        density = d0T_NB(xr, mu = mu_n, size = r_n),
+        sample = sample_labels[i],
+        sample_order = i
+      )
+      
+      # Store parameters for display
+      all_params[[i]] <- data.frame(
+        sample = sample_labels[i],
+        sample_order = i,
+        mu = round(mu_n, 3),
+        r = round(r_n, 3),
+        param_label = paste0("μ = ", round(mu_n, 3), "\nr = ", round(r_n, 3))
+      )
+    }
+    
+    # Skip if no valid data found
+    if (length(all_obs) == 0) {
+      warning(paste("No valid data found for", seq_id))
+      next
+    }
+    
+    # Combine all data
+    obs <- bind_rows(all_obs)
+    densities <- bind_rows(all_densities)
+    params <- bind_rows(all_params)
+    
+    # Determine global x-axis range for consistent scaling
+    x_max <- max(obs$N)
+    
+    # Extend density curves to common range if needed
+    densities_extended <- list()
+    for (i in seq_along(all_densities)) {
+      if (nrow(all_densities[[i]]) > 0) {
+        current_max <- max(all_densities[[i]]$x)
+        if (current_max < x_max) {
+          # Extend with zeros
+          extension <- data.frame(
+            x = (current_max + 1):x_max,
+            density = 0,
+            sample = all_densities[[i]]$sample[1],
+            sample_order = all_densities[[i]]$sample_order[1]
+          )
+          densities_extended[[i]] <- rbind(all_densities[[i]], extension)
+        } else {
+          densities_extended[[i]] <- all_densities[[i]]
+        }
+      }
+    }
+    densities <- bind_rows(densities_extended)
+    
+    # Create colors (cycle through if more samples than colors)
+    colors <- c('#1f77b4')
+    sample_colors <- colors[((1:length(unique(obs$sample))) - 1) %% length(colors) + 1]
+    names(sample_colors) <- unique(obs$sample[order(obs$sample_order)])
+    
+    # Create plot with facets
+    p <- ggplot(obs, aes(x = N)) +
+      geom_histogram(aes(y = after_stat(density), fill = sample), 
+                     alpha = 0.4, binwidth = 1, #fill = "#1f77b4"
+                     ) +
+      geom_line(data = densities, aes(x = x, y = density, color = sample)) +
+      geom_text(data = params, aes(label = param_label), 
+                x = Inf, y = Inf, hjust = 1.1, vjust = 1.1, size = 3) +
+      xlim(0,25) + 
+      ylim(0,0.4) + 
+      facet_wrap(~ factor(sample, levels = unique(sample[order(sample_order)])), 
+                 scales = "fixed") +
+      scale_fill_manual(values = sample_colors) +
+      scale_color_manual(values = sample_colors) +
+      labs(x = "Transcript/plasmid", y = "Relative frequency",
+           title = paste("Observed vs. 0-truncated NB fit:", seq_id),
+           fill = "Sample", color = "Sample") +
+      theme_classic(base_size = 12) +
+      theme(strip.background = element_rect(fill = "lightgray"))
+    
+    plot_list[[seq_id]] <- p
+  }
+  
+  # Return single plot if only one seq_ID, otherwise return list
+  if (length(plot_list) == 1) {
+    return(plot_list[[1]])
+  } else {
+    return(plot_list)
+  }
+}
+
+
+
+
+```
+
+
+```{r}
+plot_nb_fit_facets(count_data, STAP_annotated, 
+                   seq_ids = "Dscp_promoter_synthetic_+",
+                   samples = c("libFL008_E28_RT2_r2", "libFL008_E28_RT2_r3", "libFL008_E28_RT2_pooledby2"),
+                   sample_labels = c( "rep2", "rep3", "pooledby2"))
+
+```
+
+
+```{r}
+plots <- plot_nb_fit_facets(count_data, STAP_annotated, 
+                           seq_ids = TATA,
+                           samples = c("libFL008_E28_RT2_pooledby2"),
+                           sample_labels = c("pooledby2"))
+
+# Display individual plots
+plots
+#plots[["chr2R_8592612_8592745_+"]]
+
+```
+
+
+
+
+```{r}
+
+plot_nb_fit_facets_motif(count_data, STAP_annotated,
+                   seq_ids=c("Dscp_promoter_synthetic_+",oligo_TATA),
+                   samples=c("libFL008_E28_RT2_r1","libFL008_E28_RT2_r2","libFL008_E28_RT2_r3"),
+                   sample_labels=c("rep1","rep2","rep3"),
+                   color_by="sample")
+
+
+plot_nb_fit_facets_motif(count_data, STAP_annotated,
+                   seq_ids=c("Dscp_promoter_synthetic_+",oligo_TATA),
+                   samples=c("libFL008_E28_RT2_r1","libFL008_E28_RT2_r2","libFL008_E28_RT2_r3"),
+                   color_by="TATAbox")
+
+plot_nb_fit_facets_motif(count_data, STAP_annotated,
+                   seq_ids=c("Dscp_promoter_synthetic_+",FISH),
+                   samples=c("libFL008_E28_RT2_r1","libFL008_E28_RT2_r2","libFL008_E28_RT2_r3"),
+                   color_by="TATAbox")
+
+
+
+```
+
+
+
+```{r, echo = FALSE}
+# count_data <- merge(count_data, new_STAP, by.x = "seq_ID", by.y = "oligo_id", all.x = TRUE)
+# 
+# count_data %>% filter(enhancer == "RT2" & rep %in% c("rep2", "rep3")) %>%
+#   filter(seq_ID %in% oligo_low[c(6:7,9,14, 24)]) %>%
+#   ggplot() +
+#   geom_histogram(aes(x = N), binwidth = 1,position = "identity", fill = "lightgrey",
+#                  alpha = 0.9) +
+#   #scale_color_manual(values = c("#3B9AB2", "#03596D")) +
+#   #scale_color_manual(values = c("darkgrey", "black")) +
+#   xlim(0,55)+
+#   #ylim(0,100) +
+#   facet_grid(rep~ seq_ID) +
+#   theme_classic(base_size = 15)
+# oligo_low[1:7]
+
+count_data %>% filter(enhancer == "RT2" & rep %in% c("rep2", "rep3")) %>%
+  filter(seq_ID %in% oligo_mid[c(11,14,17)]) %>%
+  ggplot() +
+  geom_histogram(aes(x = N), binwidth = 1,position = "identity", fill = "lightgrey",
+                 alpha = 0.9) +
+  #scale_color_manual(values = c("#3B9AB2", "#03596D")) +
+  #scale_color_manual(values = c("darkgrey", "black")) +
+  xlim(0,55)+
+  #ylim(0,100) +
+    labs(title = "Histograms of mid expression examples")+ 
+  facet_grid(rep~ seq_ID) +
+  theme_classic(base_size = 15)
+oligo_mid[1:7]
+
+count_data %>% filter(enhancer == "RT2" & rep %in% c("rep2", "rep3")) %>%
+  filter(seq_ID %in% oligo_high[c(3,5,6, 10)]) %>%
+  ggplot() +
+  geom_histogram(aes(x = N), binwidth = 1,position = "identity", fill = "lightgrey",
+                 alpha = 0.9) +
+  #scale_color_manual(values = c("#3B9AB2", "#03596D")) +
+  #scale_color_manual(values = c("darkgrey", "black")) +
+  xlim(0,55)+
+  #ylim(0,100) +
+    labs(title = "Histograms of high expression examples")+ 
+  facet_grid(rep~ seq_ID) +
+  theme_classic(base_size = 15)
+oligo_high[1:7]
+# 
+
+
+
+low <- c(#"chr2L_10993783_10993916_-" "chr2L_11285706_11285839_+" "chr2L_12370533_12370666_-" 
+  "chr2L_13060071_13060204_-","chr2L_13375384_13375517_+", "chr2L_16816598_16816731_+", "chr2L_21656707_21656840_-", "chr2L_7402839_7402972_+")
+mid <- c(#"chr2L_10199045_10199178_-" "chr2L_10770801_10770934_+" "chr2L_10801041_10801174_-" 
+  #"chr2L_11081330_11081463_-", #"chr2L_11136335_11136468_+" 
+  #"chr2L_11149117_11149250_-", "chr2L_1163815_1163948_-", 
+  "chr2L_13550076_13550209_+", "chr2L_13847859_13847992_+", #"chr2L_13971350_13971483_+", 
+  "chr2L_14417280_14417413_-")
+high <- c(#"Dscp_promoter_synthetic_+", 
+  #"chr2L_14001181_14001314_-",  
+  "chr2L_15762688_15762821_-",#"chr2L_15893748_15893881_-", 
+  "chr2L_1737402_1737535_+",
+  "chr2L_18987209_18987342_-"#, "chr2L_20115909_20116042_-"
+  ,"chr2L_21629861_21629994_-"
+)
+low_new <- STAP_annotated %>% filter(condition == "RT2" & full_prec2 == TRUE & filter2 == TRUE & high_mu == TRUE & rep == "pooledby2" & log2_class == "low") %>% pull(seq_ID)
+
+low <- c(#"chr2L_10993783_10993916_-" "chr2L_11285706_11285839_+" "chr2L_12370533_12370666_-" 
+  "chr2L_13060071_13060204_-","chr2L_16816598_16816731_+","chr2L_7497293_7497426_-" )
+
+count_data %>% filter(enhancer == "RT2" & rep %in% c("rep2", "rep3")) %>%
+  filter(seq_ID %in% low) %>%
+  ggplot() +
+  geom_histogram(aes(x = N), binwidth = 1,position = "identity", fill = "lightgrey",
+                 alpha = 0.9) +
+  labs(title = "Histograms of low expression examples")+ 
+  #scale_color_manual(values = c("#3B9AB2", "#03596D")) +
+  #scale_color_manual(values = c("darkgrey", "black")) +
+  xlim(0,55)+
+  #ylim(0,100) +
+  facet_grid(rep~ seq_ID) +
+  theme_classic(base_size = 15)
+
+```
+
+
+```{r, echo = FALSE}
+
+plot_nb_fit_facets(count_data, STAP_annotated, 
+                   seq_ids = low,
+                   samples = c("libFL008_E28_RT2_pooledby2"),
+                   sample_labels = c("pooledby2"))
+
+plot_nb_fit_facets(count_data, STAP_annotated, 
+                   seq_ids = mid,
+                   samples = c("libFL008_E28_RT2_pooledby2"),
+                   sample_labels = c("pooledby2"))
+
+plot_nb_fit_facets(count_data, STAP_annotated, 
+                   seq_ids = c(high, TATA[1]),
+                   samples = c("libFL008_E28_RT2_pooledby2"),
+                   sample_labels = c("pooledby2"))
+
+plot_nb_fit_facets(count_data, STAP_annotated, 
+                   seq_ids = c(FISH),
+                   samples = c("libFL008_E28_RT2_pooledby2"),
+                   sample_labels = c("pooledby2"))
+
+```
+
+
+```{r}
+plots2 <- plot_nb_fit_facets(count_data, STAP_annotated, 
+                           seq_ids = c(low,mid,high),
+                           samples = c("libFL008_E28_RT2_r2", 
+                                     "libFL008_E28_RT2_r3"),
+                           sample_labels = c("rep2", "rep3"))
+
+# Display individual plots
+plots2
+
+plots2 <- plot_nb_fit_facets(
+  count_data, STAP_annotated, 
+  seq_ids = c(low, mid, high, TATA[1], Inr_DPE[3], FISH),
+  samples = c("libFL008_E28_RT2_pooledby2"),
+  sample_labels = c("pool")
+)
+
+#print plots
+if (is.list(plots2)) {
+  for (i in seq_along(plots2)) {
+    p <- plots2[[i]]
+    if (!is.null(p) && inherits(p, "ggplot")) {
+      nm <- names(plots2)[i]
+      fname <- if (!is.null(nm) && nzchar(nm)) {
+        paste0("nb_fit_facets_pool_ylim", nm, ".pdf")
+      } else {
+        paste0("nb_fit_facets_pool_ylim", i, ".pdf")
+      }
+      grDevices::cairo_pdf(paste0(out_dir,fname), width = 3, height = 2)
+      print(p)
+      dev.off()
+    }
+  }
+}
+head(unique(STAP_annotated[seq_ID %in% c(low, mid, high, TATA[1], Inr_DPE[3]),.(seq_ID, main_mots)]), 11)
+```
+
+
+```{r, echo = FALSE}
+
+fitlm = lm((log2FoldChange_RT2)~(log2FoldChange_zfh1) , data = diff_exp_sub2)
+PCC <- cor((diff_exp_sub2$log2FoldChange_zfh1), diff_exp_sub2$log2FoldChange_RT2, method = 'pearson', use = "complete.obs")
+
+library(ggrepel)
+
+p_scatter <- diff_exp_sub2 %>%
+  mutate(selected_oligos = ifelse(oligo_id %in% low, "low", 
+                          ifelse(oligo_id %in% mid, "mid", 
+                          ifelse(oligo_id %in% c(high, TATA[1], Inr_DPE[3]), "high", "not_selected")))) %>%
+  ggplot() + 
+  # base layer: faint background
+  geom_point(aes(x = log2FoldChange_zfh1, y = log2FoldChange_RT2, color = selected_oligos), 
+             alpha = 0.3, size = 2) + 
+  
+  # overlay: highlighted low/mid/high
+  geom_point(data = . %>% filter(selected_oligos %in% c("low","mid","high")),
+             aes(x = log2FoldChange_zfh1, y = log2FoldChange_RT2, color = selected_oligos),
+             alpha = 1, size = 4) +
+  
+  # labels: oligo IDs for highlighted only
+  geom_text_repel(data = . %>% filter(selected_oligos %in% c("low","mid","high")),
+                  aes(x = log2FoldChange_zfh1, 
+                      y = log2FoldChange_RT2, 
+                      label = oligo_id,
+                      color = selected_oligos),
+                  size = 4, show.legend = FALSE) +
+  
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), 
+              linetype = "dashed") + 
+  scale_color_manual(values = c("low"='#00a9da', "mid"='#1f77b4', "high"='#023e64', "not_selected"='grey32')) + 
+  ggtitle("BARe-seq library activity vs. STAP-seq E28") + 
+  labs(title = paste0("PCC = ", round(PCC, digits = 2)), 
+       subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))) + 
+  ylab("log2FC BARe-seq promoter activity") + 
+  xlab("log2FC STAP-seq promoter activity") + 
+  xlim(-3, 15) + 
+  ylim(-3, 15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+
+# Display in the Rmd output
+p_scatter
+
+# Save to PDF (adjust size as needed)
+ggsave("BAre_vs_STAP_labeled_oligos.pdf", plot = p_scatter, width = 7, height = 7, units = "in")
+
+
+```
+
+
+
+
+
+#how do the parameters look? 
+```{r}
+
+
+p <- STAP_annotated %>% filter(condition == "RT2" & high_mu == TRUE & KS_pval == TRUE) %>%
+  ggplot() + 
+  geom_histogram(aes(x = log10(bfreq)), binwidth = 0.1,  fill = "#F2994A", alpha = 0.8) + 
+      labs(title = "high_mu and KS_pval")+ 
+  xlim(-2,1.5) + 
+  theme_classic(base_size = 15)
+
+q <- STAP_annotated %>% filter(condition == "RT2" & high_mu == TRUE & KS_pval == TRUE) %>%
+  ggplot() + 
+  geom_histogram(aes(x = log10(bsize)), binwidth = 0.1, fill = "#F2994A", alpha = 0.8) + 
+  xlim(-2,1.5) + 
+  theme_classic(base_size = 15)
+q1 <- STAP_annotated %>% filter(condition == "RT2" & high_mu == TRUE & KS_pval == TRUE) %>%
+  ggplot() + 
+  geom_histogram(aes(x = log10(exp)), binwidth = 0.1, fill = "#F2994A", alpha = 0.8) + 
+  xlim(-2,1.5) + 
+  theme_classic(base_size = 15)
+
+grid.arrange(p,q,q1, ncol = 1)
+
+ggsave(paste0(out_dir,"BAre_E28_parameter_histograms.pdf"), plot = grid.arrange(p,q,q1, ncol = 1), width = 3, height = 8, units = "in")
+
+```
+
+```{r}
+
+#plotting burst size vs burst frequency
+scatter_df <- STAP_annotated %>% 
+  filter(condition == "RT2", full_prec2 == TRUE, filter2 == TRUE, high_mu == TRUE, rep == "pooledby2") %>%
+  mutate(
+    selected_oligos = ifelse(
+      seq_ID %in% low, "low",
+      ifelse(
+        seq_ID %in% mid, "mid",
+        ifelse(seq_ID %in% c(high, TATA[1], Inr_DPE[3]), "high", "not_selected")
+      )
+    )
+  )
+
+scatter2 <- ggplot(scatter_df) +
+  # base/background points
+  geom_point(aes(x = log10(bsize), y = log10(bfreq)),
+             color = "gray12", alpha = 0.4, size = 2) +
+  
+  # overlay highlighted: low/mid/high
+  geom_point(
+    data = subset(scatter_df, selected_oligos %in% c("low","mid","high")),
+    aes(x = log10(bsize), y = log10(bfreq), color = selected_oligos),
+    alpha = 1, size = 4
+  ) +
+  
+  # labels for selected oligos
+  geom_text_repel(
+    data = subset(scatter_df, selected_oligos %in% c("low","mid","high")),
+    aes(x = log10(bsize), y = log10(bfreq), label = seq_ID, color = selected_oligos),
+    size = 4, show.legend = FALSE
+  ) +
+  
+  scale_color_manual(values = c(
+    low = '#00a9da', mid = '#1f77b4', high = '#023e64', not_selected = 'grey32'
+  )) +
+  xlim(-2.5, 2.5) +
+  theme_classic(base_size = 15)
+
+scatter2
+ggsave("bsize_bfreq_higjlighted.pdf", plot = scatter2, width = 7, height = 7, units = "in")
+
+```
+
+
+
