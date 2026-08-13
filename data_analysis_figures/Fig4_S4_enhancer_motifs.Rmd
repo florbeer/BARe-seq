@@ -1,0 +1,1055 @@
+---
+title: "Figure 4 & Supplemental Figure 4 — enhancer motif analysis and BARe-seq validation"
+author: "FL"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+<!--
+================================================================================
+FIGURE / PANEL MAP  (which chunk makes which panel)
+================================================================================
+This combined script produces Figure 4 (enhancer motif regression) and
+Supplemental Figure 4 (correlation heatmaps + BARe-seq validation).
+
+FIGURE 4
+  4A  Enhancer library + motif-frequency donut (ETS, GATA, AP1, SREBP, Trl,
+      twist, Ohler6, Ohler7, Ohler1, Dref) ................. chunk "FIGURE 4A"
+  4B  Regression-coefficient heatmap (motif x promoter), pooled samples,
+      multivariate model, for burst size / frequency / mean
+      expression .......................................... chunk "FIGURE 4B"
+  4C  Illustration of the per-motif effect analysis ........ (no code)
+  4D  Per-motif burst-size delta scatter + boxplots ........ (NOT in this script)
+  4E  Per-motif burst-frequency delta scatter .............. (NOT in this script)
+
+SUPPLEMENTAL FIGURE 4
+  S4A Log2 promoter-responsiveness scatter ................. (different dataset, excluded)
+  S4B BARe-seq vs STARR-seq log2FC scatter (3 promoters) .. chunk "SUPPL. FIG. 4B"
+  S4C Mean expression histograms with mu threshold ......... chunk "SUPPL. FIG. 4C"
+  S4D Viridis burst-size vs frequency, log10(exp) .......... (in Fig3_promoter_enhancer_clean.Rmd)
+  S4E Replicate-level correlation heatmaps ................. chunk "SUPPL. FIG. 4E"
+  S4F Pooled-sample correlation heatmaps ................... chunk "SUPPL. FIG. 4F"
+
+  Additional exploratory chunks (NOT publication panels) are labelled "EXPLORATORY":
+  per-motif-instance boxplots, presence/absence median heatmaps, meta-analysis scatter.
+
+  NOTE: no plots are written to disk in this version -- every figure is only
+  displayed inline. To save a figure, wrap it in a pdf(...) / print(...) /
+  dev.off() block writing to a relative directory such as ./output/Fig4.
+
+================================================================================
+DATA SOURCES
+================================================================================
+All inputs are the published supplemental tables -- no cluster files needed.
+
+  * Enhancer burst parameters : Tables/Table7_enhancer_burst_parameters.xlsx
+                                (sheet "STARR"): seq_ID, sample, bfreq, bsize,
+                                exp, log2FoldChange, high_mu, KS_pval
+  * Enhancer motif counts +   : Tables/Table6_enhancer_library_annotations.xlsx
+    annotations + BARe-seq      (sheet "STARR"): per-oligo integer counts for
+    log2FC                      ETS, GATA, AP1, SREBP, Trl, twist, Ohler6,
+                                Ohler7, Ohler1, Dref (+ enhancer_group, class,
+                                dev_log2FoldChange, hk_log2FoldChange for
+                                BARe-seq validation)
+  * Sample name mapping +     : Tables/Table3_mu_thresholds.xlsx
+    mu thresholds               (new_sample_name, sample, mu_threshold)
+================================================================================
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+require(data.table)
+require(ggplot2)
+require(broom)
+require(purrr)
+require(metafor)
+library(dplyr)
+library(tidyr)
+require(readxl)
+#require(tibble)
+require(ggrepel)
+#require(scales)
+```
+
+## Sample definitions
+
+```{r sample-definitions}
+# Published enhancer (STARR-seq) sample names.
+pooled_samples <- c(
+  "libFL004_STARR_DSCP_pool",
+  "libFL005_STARR_Rpl35_pool",
+  "libFL006_STARR_Rps15A_pool"
+)
+
+replicate_samples <- c(
+  "libFL004_STARR_DSCP_replicate1", "libFL004_STARR_DSCP_replicate2",
+  "libFL005_STARR_Rpl35_replicate1", "libFL005_STARR_Rpl35_replicate2",
+  "libFL006_STARR_Rps15A_replicate1", "libFL006_STARR_Rps15A_replicate2"
+)
+
+# All samples analysed (pools + replicates).
+sample_names <- c(pooled_samples, replicate_samples)
+
+# Motif columns used throughout (integer counts in Table 6).
+cols <- c("ETS", "GATA", "AP1", "SREBP", "Trl", "twist",
+          "Ohler6", "Ohler7", "Ohler1", "Dref")
+```
+
+## Load and merge data
+
+Enhancer burst parameters (Table 7) are joined to the per-oligo motif counts and
+annotations (Table 6) on `seq_ID`, then split per sample and filtered to
+high-quality oligos (`high_mu == TRUE & KS_pval > 0.01`).
+
+```{r load-data}
+# Load Table 7: STARR burst parameters
+burst <- as.data.table(
+  read_xlsx("/groups/stark/lorbeer/BARE-seq_data_prep/Tables/Table7_enhancer_burst_parameters.xlsx", sheet = "STARR")
+)
+
+# Load Table 6: enhancer annotations + motif counts + BARe-seq log2FC
+anno <- as.data.table(
+  read_xlsx("/groups/stark/lorbeer/BARE-seq_data_prep/Tables/Table6_enhancer_library_annotations.xlsx", sheet = "STARR")
+)
+
+# Load Table 3: mu thresholds and sample name mapping
+mu_thresholds_raw <- read_excel("/groups/stark/lorbeer/BARE-seq_data_prep/Tables/Table3_mu_thresholds.xlsx")
+mu_thresholds <- as.data.table(mu_thresholds_raw)
+
+# Keep motif counts + a few annotation columns; join on seq_ID.
+anno_keep <- unique(anno[, c("seq_ID", "enhancer_group", "class", cols), with = FALSE])
+param <- merge(burst, anno_keep, by = "seq_ID", all.x = TRUE)
+
+# Merge mu thresholds into param (using new_sample_name)
+mu_map <- mu_thresholds[, .(sample = sample, mu_threshold)]
+param <- merge(param, mu_map, by = "sample", all.x = TRUE)
+
+# Coerce high_mu to logical (ships as text "TRUE"/"FALSE" in supplemental table)
+param[, high_mu := (high_mu == "TRUE" | high_mu == TRUE)]
+
+# Parse the published sample name: <library>_<assay>_<condition>_<rep>
+param[, c("library", "assay", "condition", "rep") :=
+        tstrsplit(sample, "_", fixed = TRUE)]
+
+head(param)
+
+# Read into a per-sample list and apply the quality filter.
+param_list <- list()
+for (s in sample_names) {
+  param_list[[s]] <- as.data.frame(param[sample == s & (high_mu & KS_pval > 0.01)])
+}
+```
+
+## Build BARe-seq validation table (for Suppl. Fig. 4B)
+
+Merge BARe-seq log2FC (from anno) with STARR-seq log2FC (from param) to compare
+the two assays.
+
+```{r build-bareseq-validation}
+# Extract pooled samples log2FC from param and reshape wide
+log2fc_wide <- param[sample %in% pooled_samples, .(seq_ID, sample, log2FoldChange)]
+log2fc_wide <- dcast(log2fc_wide, seq_ID ~ sample, value.var = "log2FoldChange")
+setnames(log2fc_wide, 
+         old = c("libFL004_STARR_DSCP_pool", "libFL005_STARR_Rpl35_pool", "libFL006_STARR_Rps15A_pool"),
+         new = c("log2FoldChange_DSCP", "log2FoldChange_Rpl35", "log2FoldChange_Rps15A"))
+
+# Merge with anno to get BARe-seq log2FC
+diff_exp <- merge(anno[, .(seq_ID, ID, Group, enhancer_group, dev_log2FoldChange, hk_log2FoldChange)], 
+                  log2fc_wide, 
+                  by = "seq_ID", 
+                  all.x = TRUE)
+
+# For backward compatibility with original variable names in plots:
+diff_exp[, log2FoldChange_rg := log2FoldChange_DSCP]
+diff_exp[, log2FoldChange_p309 := log2FoldChange_Rpl35]
+diff_exp[, log2FoldChange_p319 := log2FoldChange_Rps15A]
+
+head(diff_exp)
+```
+
+## Helper functions for motif regression
+
+Motif count predictors are upper-clipped before modelling: the clipping
+threshold is the 95th percentile within each motif column, constrained to lie
+between 2 and 3. Values above the threshold are replaced by the threshold to
+reduce leverage from rare high-count observations while retaining information.
+
+```{r helper-functions}
+# Generate clipped motif counts (few observations at the high end).
+clip_motifs <- function(dat, cols,
+                        q = 0.95,
+                        min_cutoff = 2,
+                        max_cutoff = 3,
+                        suffix = "_clip") {
+  dat <- as.data.table(dat)  # safe if it's already a data.table
+  out_cols <- paste0(cols, suffix)
+
+  dat[, (out_cols) := lapply(.SD, function(x) {
+    cutoff <- quantile(x, q, na.rm = TRUE)
+    cutoff <- fcase(
+      cutoff < min_cutoff, min_cutoff,
+      cutoff > max_cutoff, max_cutoff,
+      default = cutoff
+    )
+    fifelse(x > cutoff, cutoff, x)
+  }), .SDcols = cols]
+
+  dat
+}
+
+param_list <- lapply(param_list, clip_motifs, cols = cols)
+cols_clip <- paste0(cols, "_clip")
+
+sig_stars <- function(p) {
+  case_when(
+    is.na(p)  ~ NA_character_,
+    p < 0.001 ~ "***",
+    p < 0.01  ~ "**",
+    p < 0.05  ~ "*",
+    TRUE      ~ "ns"
+  )
+}
+
+na_block_for_motifs <- function(motifs, outcome, model_label, n_used = NA_integer_) {
+  tibble(
+    Motif = motifs,
+    Outcome = outcome,
+    Model = model_label,
+    n_used = n_used,
+    n_present = NA_integer_,
+    prop_present = NA_real_,
+    estimate = NA_real_,
+    std.error = NA_real_,
+    statistic = NA_real_,
+    p.value = NA_real_,
+    FoldChange = NA_real_
+  )
+}
+```
+
+## EXPLORATORY — burst parameters by motif-instance count
+
+```{r exploratory-motif-boxplots}
+df <- param_list$libFL004_STARR_DSCP_pool
+
+plot_df <- df %>%
+  as.data.frame() %>%
+  pivot_longer(
+    cols = ends_with("_clip"),
+    names_to = "clipped_motif",
+    values_to = "n_clipped_instances"
+  ) %>%
+  pivot_longer(
+    cols = c(bsize, bfreq, exp),
+    names_to = "parameter",
+    values_to = "value"
+  ) %>%
+  mutate(
+    clipped_motif = sub("_clip$", "", clipped_motif),
+    n_clipped_instances = factor(n_clipped_instances)
+  )
+
+desired_order <- cols
+plot_df <- plot_df %>%
+  mutate(
+    clipped_motif = factor(clipped_motif, levels = desired_order),
+    parameter = factor(parameter, levels = c("bsize", "bfreq", "exp"))
+  )
+
+p_motifclip <- ggplot(plot_df, aes(x = n_clipped_instances, y = log10(value))) +
+  geom_boxplot(outlier.shape = NA) +
+  facet_grid(clipped_motif ~ parameter, scales = "free_y") +
+  labs(
+    x = "Number of motif instances",
+    y = "parameter (log10)",
+    title = "bsize, bfreq, and exp by motif instance"
+  ) +
+  theme_classic(base_size = 15) +
+  theme(
+    strip.background = element_rect(fill = "grey90"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+p_motifclip
+```
+
+## Linear-model functions
+
+In the enhancer analysis clipped motif counts are used as numeric predictors;
+regression coefficients represent the expected change in log10(outcome) per
+one-unit increase in clipped motif count.
+
+```{r lm-functions}
+fit_motif_model_one_df <- function(data, outcome, motifs, include_exp = FALSE) {
+  model_label <- ifelse(include_exp, "motifs_plus_log10exp", "motifs_only")
+
+  motifs_present <- intersect(motifs, colnames(data))
+  motifs_missing <- setdiff(motifs, motifs_present)
+
+  if (!outcome %in% colnames(data)) {
+    return(na_block_for_motifs(motifs, outcome, model_label, n_used = NA_integer_))
+  }
+  if (include_exp && !"exp" %in% colnames(data)) {
+    return(na_block_for_motifs(motifs, outcome, model_label, n_used = NA_integer_))
+  }
+
+  fitted_present <- purrr::map_dfr(motifs_present, function(m) {
+    rhs <- m
+    if (include_exp) rhs <- paste(rhs, "+ log10(exp)")
+    fml <- as.formula(paste0("log10(", outcome, ") ~ ", rhs))
+
+    mf <- tryCatch(model.frame(fml, data = data), error = function(e) NULL)
+    n_used <- if (is.null(mf)) NA_integer_ else nrow(mf)
+
+    if (is.null(mf) || n_used == 0) {
+      return(
+        na_block_for_motifs(m, outcome, model_label, n_used = ifelse(is.null(mf), NA_integer_, 0L)) %>%
+          dplyr::mutate(
+            n_present = ifelse(is.null(mf), NA_integer_, sum(mf[[m]] > 0, na.rm = TRUE)),
+            prop_present = ifelse(is.null(mf), NA_real_, n_present / n_used)
+          )
+      )
+    }
+
+    n_present <- sum(mf[[m]] == 1, na.rm = TRUE)
+    prop_present <- n_present / n_used
+
+    model <- tryCatch(lm(fml, data = data), error = function(e) NULL)
+    if (is.null(model)) {
+      return(
+        na_block_for_motifs(m, outcome, model_label, n_used = n_used) %>%
+          dplyr::mutate(n_present = n_present, prop_present = prop_present)
+      )
+    }
+
+    broom::tidy(model) %>%
+      dplyr::filter(term == m) %>%
+      dplyr::transmute(
+        Motif = m,
+        Outcome = outcome,
+        Model = model_label,
+        n_used = n_used,
+        n_present = n_present,
+        prop_present = prop_present,
+        estimate = estimate,
+        std.error = std.error,
+        statistic = statistic,
+        p.value = p.value,
+        FoldChange = 10^estimate
+      )
+  })
+
+  missing_part <- na_block_for_motifs(motifs_missing, outcome, model_label, n_used = NA_integer_) %>%
+    dplyr::mutate(n_present = NA_integer_, prop_present = NA_real_)
+
+  dplyr::bind_rows(fitted_present, missing_part) %>%
+    dplyr::mutate(Motif = factor(Motif, levels = motifs)) %>%
+    dplyr::arrange(Motif) %>%
+    dplyr::mutate(Motif = as.character(Motif))
+}
+
+fit_motif_model_multiv_df <- function(data, outcome, motifs, include_exp = FALSE) {
+  model_label <- ifelse(include_exp, "motifs_plus_log10exp", "motifs_only")
+
+  motifs_present <- intersect(motifs, colnames(data))
+  motifs_missing <- setdiff(motifs, motifs_present)
+
+  if (!outcome %in% colnames(data)) {
+    return(na_block_for_motifs(motifs, outcome, model_label, n_used = NA_integer_))
+  }
+  if (include_exp && !"exp" %in% colnames(data)) {
+    return(na_block_for_motifs(motifs, outcome, model_label, n_used = NA_integer_))
+  }
+  if (length(motifs_present) == 0) {
+    return(na_block_for_motifs(motifs, outcome, model_label, n_used = NA_integer_))
+  }
+
+  rhs <- paste(motifs_present, collapse = " + ")
+  if (include_exp) rhs <- paste(rhs, "+ log10(exp)")
+  fml <- as.formula(paste0("log10(", outcome, ") ~ ", rhs))
+
+  mf <- tryCatch(model.frame(fml, data = data), error = function(e) NULL)
+  n_used <- if (is.null(mf)) NA_integer_ else nrow(mf)
+
+  if (is.null(mf) || n_used == 0) {
+    out <- na_block_for_motifs(motifs_present, outcome, model_label, n_used = ifelse(is.null(mf), NA_integer_, 0L))
+    return(dplyr::bind_rows(
+      out,
+      na_block_for_motifs(motifs_missing, outcome, model_label, n_used = NA_integer_)
+    ))
+  }
+
+  presence <- tibble::tibble(
+    Motif = motifs_present,
+    n_present = purrr::map_int(motifs_present, ~ sum(mf[[.x]] == 1, na.rm = TRUE)),
+    prop_present = n_present / n_used
+  )
+
+  model <- tryCatch(lm(fml, data = data), error = function(e) NULL)
+  if (is.null(model)) {
+    out <- na_block_for_motifs(motifs_present, outcome, model_label, n_used = n_used)
+    out <- dplyr::left_join(out, presence, by = "Motif")
+    return(dplyr::bind_rows(
+      out,
+      na_block_for_motifs(motifs_missing, outcome, model_label, n_used = NA_integer_)
+    ))
+  }
+
+  coefs <- broom::tidy(model) %>%
+    dplyr::filter(term %in% motifs_present) %>%
+    dplyr::transmute(
+      Motif = term,
+      Outcome = outcome,
+      Model = model_label,
+      n_used = n_used,
+      estimate = estimate,
+      std.error = std.error,
+      statistic = statistic,
+      p.value = p.value,
+      FoldChange = 10^estimate
+    ) %>%
+    dplyr::left_join(presence, by = "Motif")
+
+  missing_part <- na_block_for_motifs(motifs_missing, outcome, model_label, n_used = NA_integer_) %>%
+    dplyr::mutate(n_present = NA_integer_, prop_present = NA_real_)
+
+  dplyr::bind_rows(coefs, missing_part) %>%
+    dplyr::mutate(Motif = factor(Motif, levels = motifs)) %>%
+    dplyr::arrange(Motif) %>%
+    dplyr::mutate(Motif = as.character(Motif))
+}
+```
+
+## Run the linear models (univariate + multivariate, with / without expression)
+
+Meaning of coefficients: association with clipped motif count -- a dose/count
+effect.
+
+```{r run-lm}
+motifs_10 <- cols_clip
+
+fit_motif_models_list_both <- function(data_list, outcomes, motifs, include_exp = FALSE) {
+  purrr::imap_dfr(data_list, function(df, nm) {
+    purrr::map_dfr(outcomes, function(outcome) {
+      multiv <- fit_motif_model_multiv_df(
+        data = df, outcome = outcome, motifs = motifs, include_exp = include_exp
+      ) %>% dplyr::mutate(Analysis = "multivariate")
+
+      univ <- fit_motif_model_one_df(
+        data = df, outcome = outcome, motifs = motifs, include_exp = include_exp
+      ) %>% dplyr::mutate(Analysis = "univariate")
+
+      dplyr::bind_rows(multiv, univ) %>%
+        dplyr::mutate(
+          sample_name = nm,
+          sig = sig_stars(p.value)
+        )
+    })
+  }) %>%
+    dplyr::select(sample_name, Outcome, Analysis, Model, Motif, sig, dplyr::everything())
+}
+
+outcomes <- c("bsize", "bfreq", "exp")
+
+results_both <- dplyr::bind_rows(
+  fit_motif_models_list_both(param_list, outcomes, motifs_10, include_exp = FALSE),
+  fit_motif_models_list_both(param_list, outcomes, motifs_10, include_exp = TRUE)
+)
+
+print(results_both)
+```
+
+## Heatmap function (regression coefficients)
+
+```{r heatmap-function}
+sym_limits <- function(x, midpoint = 0) {
+  x <- x[is.finite(x)]
+  if (length(x) == 0) return(c(-1, 1))
+  max_abs <- max(abs(x - midpoint))
+  c(midpoint - max_abs, midpoint + max_abs)
+}
+
+make_heatmap_model <- function(results, model_name,
+                              motifs_order = NULL,
+                              samples_order = NULL,
+                              min_occurrence = 0,
+                              star_size = 3,
+                              analysis = NULL) {
+
+  plot_df <- results %>%
+    dplyr::filter(Model == model_name, Outcome %in% c("bsize", "bfreq", "exp"))
+
+  analysis_label <- if (is.null(analysis)) "both (univariate + multivariable)" else analysis
+
+  if (!is.null(analysis)) {
+    plot_df <- plot_df %>% dplyr::filter(Analysis == analysis)
+  }
+
+  if (!is.null(samples_order)) {
+    plot_df <- plot_df %>%
+      dplyr::filter(sample_name %in% samples_order) %>%
+      dplyr::mutate(sample_name = factor(sample_name, levels = samples_order))
+  } else {
+    plot_df <- plot_df %>% dplyr::mutate(sample_name = factor(sample_name))
+  }
+
+  plot_df <- plot_df %>%
+    dplyr::mutate(
+      value = estimate,
+      value = ifelse(!is.na(n_present) & n_present < min_occurrence, NA_real_, value),
+      Sig_raw_plot = ifelse(sig %in% c("*", "**", "***"), sig, "")
+    )
+
+  if (!is.null(motifs_order)) {
+    plot_df <- plot_df %>% dplyr::mutate(Motif = factor(Motif, levels = motifs_order))
+  } else {
+    plot_df <- plot_df %>% dplyr::mutate(Motif = factor(Motif))
+  }
+
+  lims <- sym_limits(plot_df$value, midpoint = 0)
+
+  ggplot2::ggplot(plot_df, ggplot2::aes(x = sample_name, y = Motif)) +
+    ggplot2::geom_tile(ggplot2::aes(fill = value)) +
+    ggplot2::geom_text(ggplot2::aes(label = Sig_raw_plot), size = star_size, na.rm = TRUE) +
+    ggplot2::facet_grid(. ~ Outcome) +
+    ggplot2::scale_fill_gradient2(
+      low = "blue", mid = "white", high = "red",
+      midpoint = 0,
+      limits = lims,
+      na.value = "grey80"
+    ) +
+    ggplot2::labs(
+      title = paste0("Motif effects (", analysis_label, "): ", model_name),
+      subtitle = paste0(
+        "Stars = raw p-value; tiles shown only if n_present >= ", min_occurrence,
+        if (!is.null(samples_order)) paste0("; samples ordered (n=", length(samples_order), ")") else ""
+      ),
+      x = "Sample",
+      y = "Motif",
+      fill = "estimate"
+    ) +
+    ggplot2::theme_minimal(base_size = 11) +
+    ggplot2::theme(
+      panel.grid = ggplot2::element_blank(),
+      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1, vjust = 1),
+      strip.text = ggplot2::element_text(face = "bold")
+    )
+}
+```
+
+## FIGURE 4B — regression-coefficient heatmaps
+
+Pooled samples (multivariate = the main Fig. 4B panel; univariate shown for
+comparison). The all-samples / replicate version is used as a supplemental
+panel.
+
+```{r FIGURE 4B}
+min_occurrence <- 5
+motifs_order <- rev(motifs_10)
+
+# ---- Pooled samples (Figure 4B) ----
+q_multiv <- make_heatmap_model(results_both, "motifs_only",
+                              motifs_order = motifs_order,
+                              samples_order = pooled_samples,
+                              min_occurrence = min_occurrence,
+                              analysis = "multivariate")
+
+q_univ <- make_heatmap_model(results_both, "motifs_only",
+                            motifs_order = motifs_order,
+                            samples_order = pooled_samples,
+                            min_occurrence = min_occurrence,
+                            analysis = "univariate")
+
+q_multiv   # <- Figure 4B (multivariate, pooled)
+q_univ
+
+# ---- All (replicate-level) samples for the supplement ----
+p_multiv <- make_heatmap_model(results_both, "motifs_only",
+                              motifs_order = motifs_order,
+                              samples_order = replicate_samples,
+                              min_occurrence = min_occurrence,
+                              analysis = "multivariate")
+
+p_univ <- make_heatmap_model(results_both, "motifs_only",
+                            motifs_order = motifs_order,
+                            samples_order = replicate_samples,
+                            min_occurrence = min_occurrence,
+                            analysis = "univariate")
+
+p_multiv
+p_univ
+```
+
+## EXPLORATORY — presence/absence median (log2FC / Wilcoxon) analysis
+
+Binary motif presence/absence: median difference and Wilcoxon test per motif.
+
+```{r exploratory-median-function}
+analyze_param_list_log2FC <- function(param_list,
+                                      motifs_order,
+                                      samples_order = NULL) {
+  stopifnot(is.list(param_list))
+
+  if (is.null(names(param_list)) || any(names(param_list) == "")) {
+    names(param_list) <- paste0("sample_", seq_along(param_list))
+  }
+
+  if (!is.null(samples_order)) {
+    keep <- intersect(samples_order, names(param_list))
+    param_list <- param_list[keep]
+    param_list <- param_list[samples_order[samples_order %in% names(param_list)]]
+  }
+
+  add_significance <- function(p) {
+    dplyr::case_when(
+      is.na(p)  ~ "",
+      p < 0.001 ~ "***",
+      p < 0.01  ~ "**",
+      p < 0.05  ~ "*",
+      TRUE      ~ ""
+    )
+  }
+
+  sym_limits <- function(x, midpoint = 0) {
+    x <- x[is.finite(x)]
+    if (length(x) == 0) return(c(-1, 1))
+    max_abs <- max(abs(x - midpoint), na.rm = TRUE)
+    c(midpoint - max_abs, midpoint + max_abs)
+  }
+
+  results_df <- purrr::imap_dfr(param_list, function(df, sample_name) {
+    df <- data.table::as.data.table(df)
+
+    purrr::map_dfr(motifs_order, function(m) {
+      if (!m %in% names(df)) {
+        return(tibble::tibble(
+          sample_name = sample_name,
+          motif = m,
+          measurement = c("bfreq", "bsize", "exp"),
+          value_0 = NA_real_, value_1 = NA_real_, diff = NA_real_, log2FC = NA_real_,
+          pvalue = NA_real_, Nobservations_0 = NA_integer_, Nobservations_1 = NA_integer_
+        ))
+      }
+
+      dt_m <- df[, .(bfreq, bsize, exp, motif = get(m))]
+
+      n0 <- sum(dt_m$motif == 0, na.rm = TRUE)
+      n1 <- sum(dt_m$motif > 0, na.rm = TRUE)
+
+      one_measure <- function(y) {
+        med0 <- dt_m[motif == 0, median(get(y), na.rm = TRUE)]
+        med1 <- dt_m[motif > 0, median(get(y), na.rm = TRUE)]
+        wt <- suppressWarnings(stats::wilcox.test(get(y) ~ (motif > 0), data = dt_m))
+
+        tibble::tibble(
+          sample_name = sample_name,
+          motif = m,
+          measurement = y,
+          value_0 = med0,
+          value_1 = med1,
+          diff = med1 - med0,
+          log2FC = log2(med1 / med0),
+          pvalue = wt$p.value,
+          Nobservations_0 = n0,
+          Nobservations_1 = n1
+        )
+      }
+
+      dplyr::bind_rows(one_measure("bfreq"), one_measure("bsize"), one_measure("exp"))
+    })
+  }) %>%
+    dplyr::mutate(
+      significance = add_significance(pvalue),
+      motif = factor(motif, levels = motifs_order),
+      sample_name = factor(sample_name, levels = names(param_list)),
+      measurement = dplyr::recode(
+        measurement,
+        bfreq = "Burst Frequency",
+        bsize = "Burst Size",
+        exp   = "Mean expression"
+      )
+    )
+
+  lims <- sym_limits(results_df$log2FC, midpoint = 0)
+
+  p <- ggplot2::ggplot(results_df, ggplot2::aes(x = sample_name, y = motif, fill = log2FC)) +
+    ggplot2::geom_tile() +
+    ggplot2::geom_text(ggplot2::aes(label = significance), size = 3) +
+    ggplot2::facet_grid(. ~ measurement) +
+    ggplot2::scale_fill_gradient2(
+      limits = lims,
+      low = "blue", mid = "white", high = "red",
+      midpoint = 0,
+      oob = scales::squish,
+      na.value = "grey90",
+      name = "log2FC"
+    ) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(
+      panel.grid = ggplot2::element_blank(),
+      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1),
+      axis.title.x = ggplot2::element_blank(),
+      axis.title.y = ggplot2::element_blank(),
+      strip.text = ggplot2::element_text(face = "bold")
+    )
+
+  list(table = results_df, plot = p)
+}
+```
+
+```{r exploratory-median-heatmaps}
+# pooled samples only
+res_pooled <- analyze_param_list_log2FC(
+  param_list,
+  motifs_order = motifs_10,
+  samples_order = pooled_samples
+)
+print(res_pooled$plot)
+pooled_table <- res_pooled$table
+
+# all samples
+res_all <- analyze_param_list_log2FC(param_list, motifs_order = motifs_10)
+print(res_all$plot)
+all_table <- res_all$table
+```
+
+## EXPLORATORY — meta-analysis across pooled samples
+
+Fixed-effect meta-analysis of the multivariate motifs_only coefficients across
+the three pooled samples (motif must contribute in >= min_k samples).
+
+```{r exploratory-meta}
+min_k <- 3
+
+meta_input <- results_both %>%
+  filter(sample_name %in% pooled_samples & Analysis == "multivariate" & Model == "motifs_only") %>%
+  filter(
+    is.finite(estimate),
+    is.finite(std.error),
+    std.error > 0,
+    !is.na(sample_name)
+  )
+
+combos <- meta_input %>%
+  distinct(sample_name, Motif, Outcome) %>%
+  count(Motif, Outcome, name = "k") %>%
+  filter(k >= min_k)
+
+pooled_list <- vector("list", nrow(combos))
+
+for (i in seq_len(nrow(combos))) {
+  subset_data <- meta_input %>%
+    filter(Motif == combos$Motif[i], Outcome == combos$Outcome[i]) %>%
+    distinct(sample_name, .keep_all = TRUE)
+
+  meta_obj <- rma(
+    yi = subset_data$estimate,
+    sei = subset_data$std.error,
+    method = "FE"
+  )
+
+  pooled_list[[i]] <- data.frame(
+    Motif = combos$Motif[i],
+    Outcome = combos$Outcome[i],
+    k = nrow(subset_data),
+    pooled_estimate = as.numeric(meta_obj$beta[1]),
+    pooled_SE = as.numeric(meta_obj$se),
+    pooled_pValue = as.numeric(meta_obj$pval),
+    pooled_zValue = as.numeric(meta_obj$zval),
+    pooled_FoldChange = 10^as.numeric(meta_obj$beta[1]),
+    pooled_FC_low  = 10^as.numeric(meta_obj$ci.lb),
+    pooled_FC_high = 10^as.numeric(meta_obj$ci.ub),
+    tau2 = as.numeric(meta_obj$tau2),
+    I2 = as.numeric(meta_obj$I2)
+  )
+}
+
+pooled_results <- bind_rows(pooled_list) %>%
+  mutate(
+    Sig_raw = case_when(
+      pooled_pValue < 0.001 ~ "***",
+      pooled_pValue < 0.01  ~ "**",
+      pooled_pValue < 0.05  ~ "*",
+      TRUE ~ "ns"
+    )
+  )
+
+print(pooled_results)
+
+df_wide <- pooled_results %>%
+  filter(Outcome %in% c("bsize", "bfreq")) %>%
+  select(Motif, Outcome,
+         pooled_estimate, pooled_SE, pooled_pValue,
+         pooled_FoldChange, pooled_FC_low, pooled_FC_high,
+         k, tau2, I2) %>%
+  pivot_wider(
+    names_from = Outcome,
+    values_from = c(pooled_estimate, pooled_SE, pooled_pValue,
+                    pooled_FoldChange, pooled_FC_low, pooled_FC_high,
+                    k, tau2, I2),
+    names_sep = "_"
+  ) %>%
+  filter(!is.na(pooled_FoldChange_bsize), !is.na(pooled_FoldChange_bfreq)) %>%
+  mutate(
+    est_low_bsize  = pooled_estimate_bsize - 1.96 * pooled_SE_bsize,
+    est_high_bsize = pooled_estimate_bsize + 1.96 * pooled_SE_bsize,
+    est_low_bfreq  = pooled_estimate_bfreq - 1.96 * pooled_SE_bfreq,
+    est_high_bfreq = pooled_estimate_bfreq + 1.96 * pooled_SE_bfreq,
+    Significance = case_when(
+      pooled_pValue_bsize < 0.05 & pooled_pValue_bfreq < 0.05 ~ "Both",
+      pooled_pValue_bsize < 0.05 & pooled_pValue_bfreq >= 0.05 ~ "bsize only",
+      pooled_pValue_bsize >= 0.05 & pooled_pValue_bfreq < 0.05 ~ "bfreq only",
+      TRUE ~ "Neither"
+    )
+  )
+
+print(df_wide)
+```
+
+```{r exploratory-meta-plot}
+p_meta <- ggplot(df_wide,
+            aes(x = pooled_estimate_bsize,
+                y = pooled_estimate_bfreq,
+                color = Significance,
+                label = Motif)) +
+  geom_errorbarh(aes(xmin = est_low_bsize, xmax = est_high_bsize),
+                 height = 0, alpha = 0.4) +
+  geom_errorbar(aes(ymin = est_low_bfreq, ymax = est_high_bfreq),
+                width = 0, alpha = 0.4) +
+  geom_point(size = 3) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  theme_classic(base_size = 14) +
+  scale_color_manual(values = c(
+    "Both" = "deepskyblue",
+    "bsize only" = "cyan3",
+    "bfreq only" = "royalblue3",
+    "Neither" = "gray60"
+  )) +
+  labs(
+    x = expression("Pooled effect on log"[10]*"(bsize)  (beta)"),
+    y = expression("Pooled effect on log"[10]*"(bfreq)  (beta)"),
+    title = "Meta-analysis: Association of motif count with burst parameters",
+    subtitle = paste0("Points = pooled betas; error bars = 95% CI; min_k = ", min_k)
+  )
+
+if (requireNamespace("ggrepel", quietly = TRUE)) {
+  p_meta <- p_meta + ggrepel::geom_text_repel(size = 3, max.overlaps = 30)
+} else {
+  p_meta <- p_meta + geom_text(size = 3, vjust = -0.5, check_overlap = TRUE)
+}
+print(p_meta)
+```
+
+## FIGURE 4A — enhancer motif-frequency donut
+
+Computed directly from the Table 6 motif counts: for each oligo a motif is
+"present" when its count is > 0, and the donut shows how many oligos contain
+each motif.
+
+```{r FIGURE 4A}
+# One row per enhancer oligo with its motif counts.
+enh_lib <- unique(anno[, c("seq_ID", cols), with = FALSE])
+
+# Count oligos containing each motif (count > 0).
+TF_freq <- data.frame(
+  Var1 = cols,
+  Freq = vapply(cols, function(m) sum(enh_lib[[m]] > 0, na.rm = TRUE), integer(1))
+)
+
+desired_order <- cols
+TF_freq$Var1 <- factor(TF_freq$Var1, levels = desired_order)
+
+motif_cols <- c(
+  "ETS" = "darkorange",
+  "GATA" = "red",
+  "AP1" = "orange",
+  "SREBP" = "darkred",
+  "Trl" = "pink",
+  "twist" = "pink3",
+  "Ohler6" = "lightblue",
+  "Ohler7" = "dodgerblue1",
+  "Ohler1" = "darkblue",
+  "Dref" = "blue"
+)
+
+motif_plot <- ggplot(TF_freq, aes(x = 3, y = Freq, fill = Var1)) +
+  geom_col() +
+  coord_polar(theta = "y") +
+  xlim(c(1.5, 3.5)) +
+  scale_fill_manual(values = motif_cols) +
+  theme_void()
+
+motif_plot
+print(TF_freq)
+```
+
+## SUPPL. FIG. 4B — BARe-seq vs STARR-seq validation
+
+Three scatter plots comparing BARe-seq log2FC (independent assay) to STARR-seq
+log2FC (this study), one per promoter.
+
+```{r SUPPL. FIG. 4B, fig.width=5, fig.height=5}
+# Left panel: BARe-seq (dev, DSCP promoter) vs STARR-seq (DSCP promoter)
+fitlm <- lm(log2FoldChange_rg ~ dev_log2FoldChange, data = diff_exp)
+PCC <- cor(diff_exp$dev_log2FoldChange, diff_exp$log2FoldChange_rg, 
+           method = 'pearson', use = "complete.obs")
+
+p_dscp <- ggplot(diff_exp) + 
+  geom_point(aes(x = dev_log2FoldChange, y = log2FoldChange_rg), color = "grey34", alpha = 0.3) + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), 
+              linetype = "dashed") + 
+  ggtitle("BARe-seq vs. STARR-seq (DSCP)") + 
+  labs(subtitle = bquote(R^2 ~ "=" ~ .(round(summary(fitlm)$r.squared, 2)) ~ 
+                         ", PCC =" ~ .(round(PCC, 2)))) + 
+  ylab("log2FC BARe-seq enhancer activity") + 
+  xlab("log2FC STARR-seq enhancer activity") + 
+  xlim(-3, 15) + 
+  ylim(-3, 15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+
+p_dscp
+
+# Middle panel: BARe-seq (hk, Rpl35 promoter) vs STARR-seq (Rpl35 promoter)
+fitlm <- lm(hk_log2FoldChange ~ log2FoldChange_p309, data = diff_exp)
+PCC <- cor(diff_exp$log2FoldChange_p309, diff_exp$hk_log2FoldChange, 
+           method = 'pearson', use = "complete.obs")
+
+p_309 <- ggplot(diff_exp) + 
+  geom_point(aes(x = log2FoldChange_p309, y = hk_log2FoldChange), alpha = 0.3, color = "grey34") + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), 
+              linetype = "dashed") + 
+  ggtitle("BARe-seq vs. STARR-seq (Rpl35)") + 
+  labs(subtitle = bquote(R^2 ~ "=" ~ .(round(summary(fitlm)$r.squared, 2)) ~ 
+                         ", PCC =" ~ .(round(PCC, 2)))) + 
+  xlab("log2FC STARR-seq (Rpl35) enhancer activity") + 
+  ylab("log2FC BARe-seq (hk) enhancer activity") + 
+  xlim(-3, 15) + 
+  ylim(-3, 15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+
+p_309
+
+# Right panel: BARe-seq (hk, Rps15A promoter) vs STARR-seq (Rps15A promoter)
+fitlm <- lm(hk_log2FoldChange ~ log2FoldChange_p319, data = diff_exp)
+PCC <- cor(diff_exp$log2FoldChange_p319, diff_exp$hk_log2FoldChange, 
+           method = 'pearson', use = "complete.obs")
+
+p_319 <- ggplot(diff_exp) + 
+  geom_point(aes(x = log2FoldChange_p319, y = hk_log2FoldChange), alpha = 0.3, color = "grey34") + 
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]), 
+              linetype = "dashed") + 
+  ggtitle("BARe-seq vs. STARR-seq (Rps15A)") + 
+  labs(subtitle = bquote(R^2 ~ "=" ~ .(round(summary(fitlm)$r.squared, 2)) ~ 
+                         ", PCC =" ~ .(round(PCC, 2)))) + 
+  xlab("log2FC STARR-seq (Rps15A) enhancer activity") + 
+  ylab("log2FC BARe-seq (hk) enhancer activity") + 
+  xlim(-3, 15) + 
+  ylim(-3, 15) + 
+  coord_fixed() + 
+  theme_classic(base_size = 15)
+
+p_319
+```
+
+## SUPPL. FIG. 4C — mean expression histograms with mu threshold
+
+Faceted histograms showing the distribution of mean expression (log10 scale)
+for all 9 STARR-seq samples (3 pooled + 6 replicates), with the mu threshold
+marked as a red dashed line.
+
+```{r SUPPL. FIG. 4C, fig.width=6, fig.height=6}
+p_mu <- param %>% 
+  ggplot() + 
+  geom_histogram(aes(x = log10(exp)), bins = 50) + 
+  geom_vline(aes(xintercept = log10(mu_threshold)), 
+             colour = "red", linetype = "dashed") +
+  facet_wrap(~sample, ncol = 3) + 
+  theme_classic(base_size = 15)
+
+p_mu
+```
+
+## Correlation-heatmap function (Suppl. Fig. 4E/4F)
+
+```{r correlation-function}
+make_correlation_heatmap <- function(dt, feature, dataset_name, sample_reps = NULL) {
+  dt <- as.data.table(dt)
+
+  if (!"sample" %in% names(dt)) stop("No 'sample' column found in data")
+
+  wide_dt <- dt[, .(
+    seq_ID,
+    sample_label = sample,
+    value = as.numeric(get(feature))
+  )]
+
+  if (!is.null(sample_reps)) {
+    wide_dt <- wide_dt[sample_label %in% sample_reps]
+  }
+
+  if (nrow(wide_dt) == 0) {
+    warning(paste("No data left after filtering for sample_reps in dataset:", dataset_name))
+    return(NULL)
+  }
+
+  wide_dt <- dcast(wide_dt, seq_ID ~ sample_label, value.var = "value")
+
+  mat <- as.matrix(wide_dt[, -1, with = FALSE])
+  storage.mode(mat) <- "numeric"
+  mat[mat <= 0] <- NA
+  mat <- log10(mat)
+
+  mat <- mat[, colSums(is.finite(mat)) >= 2, drop = FALSE]
+  if (ncol(mat) < 2) return(NULL)
+
+  cormat <- cor(mat, use = "pairwise.complete.obs", method = "pearson")
+  cormat_tbl <- as.data.frame(as.table(cormat))
+  colnames(cormat_tbl) <- c("Sample1", "Sample2", "Correlation")
+
+  ggplot(cormat_tbl, aes(Sample1, Sample2, fill = Correlation)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(
+      low = "#4575b4", mid = "white", high = "#d73027",
+      midpoint = 0.5, limits = c(0, 1), na.value = "grey90"
+    ) +
+    geom_text(aes(label = ifelse(is.na(Correlation), "NA", sprintf("%.2f", Correlation))), size = 3) +
+    labs(title = paste0(dataset_name, " | Feature: ", feature), x = "", y = "") +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          panel.grid = element_blank())
+}
+
+# High-quality enhancer oligos (same filter as the regression analysis).
+cor_data <- param[KS_pval > 0.01 & high_mu == TRUE]
+features <- c("exp", "bfreq", "bsize")
+```
+
+## SUPPL. FIG. 4E — replicate-level correlation heatmaps
+
+```{r SUPPL. FIG. 4E}
+for (f in features) {
+  p <- make_correlation_heatmap(cor_data, f, "Replicates", sample_reps = replicate_samples)
+  if (!is.null(p)) print(p)
+}
+```
+
+## SUPPL. FIG. 4F — pooled-sample correlation heatmaps
+
+```{r SUPPL. FIG. 4F}
+for (f in features) {
+  p <- make_correlation_heatmap(cor_data, f, "Pooled", sample_reps = pooled_samples)
+  if (!is.null(p)) print(p)
+}
+```
+
+```{r session-info}
+sessionInfo()
+```
