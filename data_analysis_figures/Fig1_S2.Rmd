@@ -1,0 +1,672 @@
+---
+title: "promoter-BARe-seq: Figure 1 and Supplemental Figure 2"
+author: "FL"
+date: "2025-02-13"
+output: html_document
+---
+
+<!--
+================================================================================
+OVERVIEW  — which code section makes which figure panel
+================================================================================
+This document reproduces the data-driven panels of:
+
+  Figure 1
+    A  Schematic of the BARe-seq method .......... (illustration, no code)
+    B  log2FC BARe-seq vs. STAP-seq promoter activity (scatter)
+                                                     -> "FIGURE 1B" chunk below
+    C  Observed vs. NB-fit transcript/plasmid histograms for examples 1-3
+                                                     -> made in the separate
+                                                        counts/NB-fit markdown
+                                                        (needs raw UMI counts)
+    D  Burst size / frequency / mean-expression histograms
+                                                     -> "FIGURE 1D" chunk below
+    E  Burst size vs. burst frequency (with log2FC contour)
+                                                     -> separate analysis
+
+  Supplemental Figure 2
+    A  Two-state model schematic ................. (illustration, no code)
+    B  Replicate correlation, UNFILTERED
+       (burst size / freq / mean exp) ........... -> "SUPPL. FIG. 2B/2D" chunks
+    C  Mean-expression (mu) histograms per sample
+       with mean-expression threshold line ...... -> "SUPPL. FIG. 2C" chunk
+    D  Replicate correlation, FILTERED
+       (KS-pval > 0.01 & mu threshold) .......... -> "SUPPL. FIG. 2B/2D" chunks
+    E  log2FC BARe-seq vs. STAP-seq coloured by
+       quality filters .......................... -> "SUPPL. FIG. 2E" chunk
+
+Sections marked "QC / exploratory" are diagnostic plots that are not main
+figure panels but are kept because they were used to choose thresholds.
+
+All inputs are the published supplemental tables (see the data-loading chunk).
+Sample names are the final publication names throughout.
+================================================================================
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(data.table)
+require(dplyr)
+require(ggplot2)
+require(readxl)
+library(ggrepel)
+require(patchwork)
+require(gridExtra)
+require(stringr)
+```
+
+## Data loading
+
+R version 4.1.2 and Bioconductor 3.14
+
+```{r, echo = FALSE}
+# ------------------------------------------------------------------------------
+# DATA LOADING
+#
+# Everything starts from the published supplemental tables (expected in ./Tables):
+#
+#   Table3_mu_thresholds.xlsx              per-sample mean-expression (mu)
+#                                          thresholds. Only the publication
+#                                          sample names (column `new_sample_name`)
+#                                          and the threshold are used here.
+#
+#   Table4_promoter_library_annotations.xlsx  (sheet "STAP")
+#                                          promoter annotations, core-promoter
+#                                          motifs, gene names, CP_group
+#                                          classification, and the STAP-seq
+#                                          reference activity used for Fig. 1B
+#                                          (column `log2FoldChange_STAPseq_zfh1`).
+#
+#   Table5_promoter_burst_parameters.xlsx  (sheet "STAP")
+#                                          burst parameters (bfreq, bsize, exp,
+#                                          log2FoldChange) plus the pre-computed
+#                                          quality flags high_mu and KS_pval,
+#                                          for every sample.
+#
+# Raw UMI counts are NOT part of these tables; the count-based panels
+# (Fig. 1C) live in a separate markdown and read the counts from the GEO
+# data repository accompanying the publication.
+# ------------------------------------------------------------------------------
+
+anno          <- read_xlsx("/groups/stark/lorbeer/BARE-seq_data_prep/Tables/Table4_promoter_library_annotations_updated.xlsx", sheet = "STAP")
+mu_thresholds <- read_xlsx("/groups/stark/lorbeer/BARE-seq_data_prep/Tables/Table3_mu_thresholds.xlsx")
+burst_params  <- read_xlsx("/groups/stark/lorbeer/BARE-seq_data_prep/Tables/Table5_promoter_burst_parameters.xlsx", sheet = "STAP")
+
+# --- STAP_data_annotated: burst parameters + promoter annotations + mu threshold
+STAP_data_annotated <- as.data.table(burst_params)
+
+# Split the publication sample name into its components:
+#   lib_experiment_condition_rep  e.g. libFL001 / STAP / zfh1 / pool
+STAP_data_annotated[, c("lib", "experiment", "condition", "rep") :=
+                      tstrsplit(sample, "_", keep = c(1:4))]
+
+# Add promoter annotations (motifs, gene names, classification, STAP-seq ref.)
+STAP_data_annotated <- merge(STAP_data_annotated, as.data.table(anno),
+                             by = "seq_ID", all.x = TRUE)
+
+# Per-sample mu threshold (used only for the threshold line in Suppl. Fig. 2C).
+# Table3 stores log2 thresholds; convert back to linear mu. Use the publication
+# sample names only.
+mu_thresholds_dt <- as.data.table(mu_thresholds)[
+  , .(sample = sample, mu_threshold_nofilter = 2^mu_threshold_log2)]
+STAP_data_annotated <- merge(STAP_data_annotated, mu_thresholds_dt,
+                             by = "sample", all.x = TRUE)
+
+# high_mu is stored as text in the table; make it a proper logical.
+STAP_data_annotated[, high_mu := (high_mu == "TRUE")]
+
+# --- diff_exp_sub2: wide table for the log2FC scatter plots -------------------
+# One column of BARe-seq activity per condition (from the pooled samples of
+# Table5) plus the STAP-seq reference activity (from Table4).
+burst_params_dt <- as.data.table(burst_params)
+pool_dt <- burst_params_dt[grepl("_pool$", sample)]
+pool_dt[, condition := tstrsplit(sample, "_", keep = 3L)[[1]]]
+
+diff_exp_wide <- dcast(pool_dt, seq_ID ~ condition, value.var = "log2FoldChange")
+setnames(diff_exp_wide,
+  old = c("zfh1",                "CG4822",                "Pld"),
+  new = c("log2FoldChange_zfh1", "log2FoldChange_CG4822", "log2FoldChange_Pld"))
+
+anno_dt <- as.data.table(anno)
+diff_exp_sub2 <- merge(
+  diff_exp_wide,
+  anno_dt[, .(seq_ID,
+              log2FoldChange_STAPseq_zfh1,   # STAP-seq reference (x-axis, Fig. 1B)
+              classification = CP_group)],
+  by = "seq_ID")
+setnames(diff_exp_sub2, "seq_ID", "oligo_id")
+
+head(STAP_data_annotated)
+
+# Sample groups used across the panels
+sample_reps <- c("libFL001_STAP_zfh1_replicate1",   "libFL001_STAP_zfh1_replicate2",
+                 "libFL002_STAP_CG4822_replicate1", "libFL002_STAP_CG4822_replicate2",
+                 "libFL003_STAP_Pld_replicate1",    "libFL003_STAP_Pld_replicate2")
+pooled_samples <- c("libFL001_STAP_zfh1_pool",
+                    "libFL002_STAP_CG4822_pool",
+                    "libFL003_STAP_Pld_pool")
+```
+
+```{r, echo = FALSE}
+out_dir <- "output/Fig1/"
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+## FIGURE 1D — Burst parameter distributions
+
+Overall distributions of the three inferred burst parameters (burst size, burst
+frequency, and mean expression) for the zfh1 library, quality-filtered
+(KS-pval > 0.01 & mu threshold).
+
+```{r, echo = FALSE, warning = FALSE}
+# --- FIGURE 1D: Histograms of burst size, frequency, and mean expression ------
+# Use the zfh1 pool (main experiment) with quality filters applied
+fig1d_data <- STAP_data_annotated %>%
+  filter(sample == "libFL001_STAP_zfh1_pool",
+         KS_pval > 0.01,
+         high_mu == TRUE)
+
+# Burst Size histogram
+p_bsize <- ggplot(fig1d_data, aes(x = log10(bsize))) +
+  geom_histogram(bins = 50, fill = "orange", color = "black", alpha = 0.7) +
+  labs(x = "Burst Size (log10)", y = "count") +
+  theme_classic(base_size = 12)
+
+# Burst Frequency histogram
+p_bfreq <- ggplot(fig1d_data, aes(x = log10(bfreq))) +
+  geom_histogram(bins = 50, fill = "orange", color = "black", alpha = 0.7) +
+  labs(x = "Burst Freq. (log10)", y = "count") +
+  theme_classic(base_size = 12)
+
+# Mean Expression histogram
+p_exp <- ggplot(fig1d_data, aes(x = log10(exp))) +
+  geom_histogram(bins = 50, fill = "orange", color = "black", alpha = 0.7) +
+  labs(x = "Mean Exp. (log10)", y = "count") +
+  theme_classic(base_size = 12)
+
+# Stack the three histograms vertically (as shown in Figure 1D)
+p_fig1d <- p_bsize / p_bfreq / p_exp
+print(p_fig1d)
+
+# Optional manual PDF export:
+# pdf(paste0(out_dir, "Fig1D_burst_parameter_histograms.pdf"), width = 4, height = 6)
+# print(p_fig1d)
+# dev.off()
+```
+
+## FIGURE 1B — BARe-seq vs. STAP-seq promoter activity
+
+Scatter of BARe-seq zfh1-pool activity against the published STAP-seq
+reference activity (R = 0.94 in the figure).
+
+```{r, echo = FALSE}
+# --- FIGURE 1B: log2FC BARe-seq (y) vs. log2FC STAP-seq (x) -------------------
+fitlm = lm((log2FoldChange_zfh1) ~ (log2FoldChange_STAPseq_zfh1), data = diff_exp_sub2)
+PCC <- cor((diff_exp_sub2$log2FoldChange_STAPseq_zfh1), diff_exp_sub2$log2FoldChange_zfh1,
+           method = 'pearson', use = "complete.obs")
+
+ggplot(diff_exp_sub2) +
+  geom_point(aes(x = log2FoldChange_STAPseq_zfh1, y = log2FoldChange_zfh1),
+             color = 'grey34', alpha = 0.3) +
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]),
+              linetype = "dashed") +
+  ggtitle("BARe-seq library activity vs. STAP-seq (zfh1)") +
+      labs(title = paste0("PCC = ", round(PCC, digits = 2))) +
+      ylab("log2FC BARe-seq promoter activity") +
+      xlab("log2FC STAP-seq promoter activity") +
+  xlim(-3, 15) +
+  ylim(-3, 15) +
+  coord_fixed() +
+  theme_classic(base_size = 15)
+```
+
+## QC / exploratory — other enhancer conditions vs. STAP-seq
+
+Not a main figure panel. Same scatter as Fig. 1B but for the CG4822 and Pld
+enhancer conditions; both behave as developmental-class promoters.
+
+```{r, echo = FALSE, warning=FALSE}
+# --- QC: CG4822 pool vs. STAP-seq reference ----------------------------------
+fitlm = lm((log2FoldChange_CG4822) ~ (log2FoldChange_STAPseq_zfh1), data = diff_exp_sub2)
+PCC <- cor((diff_exp_sub2$log2FoldChange_STAPseq_zfh1), diff_exp_sub2$log2FoldChange_CG4822,
+           method = 'pearson', use = "complete.obs")
+
+p_CG4822 <- diff_exp_sub2 %>% ggplot() +
+  geom_point(aes(x = log2FoldChange_STAPseq_zfh1, y = log2FoldChange_CG4822),
+             color = 'grey32', alpha = 0.3) +
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]),
+              linetype = "dashed") +
+  ggtitle("BARe-seq library activity vs. STAP-seq") +
+      labs(title = paste0("PCC = ", round(PCC, digits = 2)),
+           subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))) +
+      ylab("log2FC CG4822 enh") +
+      xlab("log2FC STAP-seq promoter") +
+  xlim(-3, 15) +
+  ylim(-3, 15) +
+  coord_fixed() +
+  theme_classic(base_size = 15)
+p_CG4822
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_CG4822.pdf"), width = 5, height = 5)
+# print(p_CG4822)
+# dev.off()
+
+# --- QC: Pld pool vs. STAP-seq reference -------------------------------------
+fitlm = lm((log2FoldChange_Pld) ~ (log2FoldChange_STAPseq_zfh1), data = diff_exp_sub2)
+PCC <- cor((diff_exp_sub2$log2FoldChange_STAPseq_zfh1), diff_exp_sub2$log2FoldChange_Pld,
+           method = 'pearson', use = "complete.obs")
+
+p_Pld <- diff_exp_sub2 %>% ggplot() +
+  geom_point(aes(x = log2FoldChange_STAPseq_zfh1, y = log2FoldChange_Pld),
+             color = 'grey32', alpha = 0.3) +
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]),
+              linetype = "dashed") +
+  ggtitle("BARe-seq library activity vs. STAP-seq") +
+      labs(title = paste0("PCC = ", round(PCC, digits = 2)),
+           subtitle = paste0("R^2 = ", round(summary(fitlm)$r.squared, digits = 2))) +
+      ylab("log2FC Pld enh") +
+      xlab("log2FC STAP-seq promoter") +
+  xlim(-3, 15) +
+  ylim(-3, 15) +
+  coord_fixed() +
+  theme_classic(base_size = 15)
+p_Pld
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_Pld.pdf"), width = 5, height = 5)
+# print(p_Pld)
+# dev.off()
+```
+
+## SUPPL. FIG. 2C — mean-expression (mu) histograms with threshold
+
+Per-sample distribution of inferred mean expression (mu) with the
+mean-expression threshold drawn as the red dashed line.
+
+```{r, echo = FALSE, warning=FALSE}
+# --- SUPPL. FIG. 2C: mu histograms, one facet per sample ---------------------
+p_mu <- STAP_data_annotated %>% filter(sample %in% c(sample_reps, pooled_samples)) %>%
+  ggplot() +
+  geom_histogram(aes(x = log10(exp)), bins = 50) +
+  geom_vline(aes(xintercept = log10(mu_threshold_nofilter)),
+             colour = "red", linetype = "dashed") +
+  facet_wrap(~sample, ncol = 3) +
+  theme_classic(base_size = 15)
+
+# Recompute high_mu from the per-sample mu threshold (matches Table5's flag);
+# kept here so the threshold line and the flag are guaranteed consistent.
+STAP_data_annotated[, high_mu := exp >= mu_threshold_nofilter]
+
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"STAP_samples_mu_threshold.pdf"), width = 6, height = 6)
+# print(p_mu)
+# dev.off()
+
+# QC variant: same histograms after removing sequences that fail the KS fit test
+p_mu_KS <- STAP_data_annotated %>% filter(sample %in% c(sample_reps, pooled_samples)) %>%
+  filter(KS_pval > 0.01) %>%
+  ggplot() +
+  geom_histogram(aes(x = log10(exp)), bins = 50) +
+  geom_vline(aes(xintercept = log10(mu_threshold_nofilter)),
+             colour = "red", linetype = "dashed") +
+  facet_wrap(~sample, ncol = 3) +
+  theme_classic(base_size = 15)
+p_mu_KS
+```
+
+```{r, echo = FALSE, warning = FALSE}
+# --- Build STAP_annotated: burst parameters joined to per-condition log2FC ----
+# Melt the wide log2FC table to long format so each (condition, seq_ID) carries
+# its log2FC, then join onto the burst-parameter table.
+diff_exp_long <- melt(as.data.table(diff_exp_sub2),
+                    id.vars = c("oligo_id", "classification"),
+                    measure.vars = patterns("^log2FoldChange_"),
+                    variable.name = "condition",
+                    value.name = "log2FoldChange")
+
+# Strip the "log2FoldChange_" prefix so condition matches STAP_data_annotated
+# (zfh1 / CG4822 / Pld). Note the STAP-seq reference column becomes
+# "STAPseq_zfh1" here and simply does not match any burst-parameter condition.
+diff_exp_long[, condition := gsub("log2FoldChange_", "", condition)]
+colnames(diff_exp_long)[1] <- "seq_ID"
+
+STAP_annotated <- merge(STAP_data_annotated, diff_exp_long,
+                        by = c("condition", "seq_ID"), all.x = TRUE)
+```
+
+## QC / exploratory — log2FC vs. mu coloured by each filter
+
+Diagnostic plots showing how the mu threshold and the KS-fit test partition the
+pooled samples. Used to set the filters shown in Suppl. Fig. 2E.
+
+```{r, echo = FALSE}
+# --- QC: coloured by mu threshold --------------------------------------------
+p_mu <- STAP_annotated %>% filter(sample %in% pooled_samples) %>%
+  ggplot() +
+  geom_point(aes(y = log2FoldChange.x, x = log10(exp), color = high_mu), alpha = 0.5) +
+  scale_color_manual(values = c("grey", "red")) +
+  facet_wrap(~sample) +
+  ggtitle("log2FC vs. log10(mu) coloured by mu threshold") +
+  theme_classic(base_size = 15)
+p_mu
+
+# --- QC: coloured by KS-fit test ---------------------------------------------
+p_KS <- STAP_annotated %>% filter(sample %in% pooled_samples) %>%
+  mutate(KS_cutoff = if_else(KS_pval > 0.01, TRUE, FALSE)) %>%
+  ggplot() +
+  geom_point(aes(y = log2FoldChange.x, x = log10(exp), color = KS_cutoff), alpha = 0.5) +
+  scale_color_manual(values = c("grey", "red")) +
+  facet_wrap(~sample) +
+  ggtitle("log2FC vs. log10(mu) coloured by KS.pval") +
+  theme_classic(base_size = 15)
+p_KS
+
+# --- QC: coloured by both filters combined -----------------------------------
+p_mu_KS <- STAP_annotated %>% filter(sample %in% pooled_samples) %>%
+  mutate(KS_cutoff = if_else(KS_pval > 0.01 & high_mu, TRUE, FALSE)) %>%
+  ggplot() +
+  geom_point(aes(y = log2FoldChange.x, x = log10(exp), color = KS_cutoff), alpha = 0.5) +
+  scale_color_manual(values = c("grey", "red")) +
+  facet_wrap(~sample) +
+  ggtitle("log2FC vs. log10(mu) coloured by KS.pval & mu threshold") +
+  theme_classic(base_size = 15)
+p_mu_KS
+
+# Quick counts of sequences passing the KS test in each zfh1 replicate
+STAP_annotated %>% filter(rep == "replicate1" & KS_pval > 0.01 & condition == "zfh1")
+STAP_annotated %>% filter(rep == "replicate2" & KS_pval > 0.01 & condition == "zfh1")
+```
+
+## SUPPL. FIG. 2E — log2FC scatter coloured by quality filters
+
+Same scatter as Fig. 1B, coloured by which sequences pass the combined
+KS-fit + mu-threshold filter (the right-hand panel of Suppl. Fig. 2E).
+
+```{r, echo = FALSE}
+# --- SUPPL. FIG. 2E: BARe-seq vs. STAP-seq coloured by KS & mu filters --------
+fitlm = lm((log2FoldChange_zfh1) ~ (log2FoldChange_STAPseq_zfh1), data = diff_exp_sub2)
+PCC <- cor((diff_exp_sub2$log2FoldChange_STAPseq_zfh1), diff_exp_sub2$log2FoldChange_zfh1,
+           method = 'pearson', use = "complete.obs")
+
+# Attach the quality flags from the zfh1 pool (the experiment shown here)
+diff_exp_sub2 <- merge(
+  diff_exp_sub2,
+  STAP_annotated[condition == "zfh1" & rep == "pool", .(seq_ID, KS_pval, high_mu)],
+  by.x = "oligo_id", by.y = "seq_ID", all.x = TRUE)
+
+p_color <- diff_exp_sub2 %>%
+  mutate(KS_cutoff = if_else(KS_pval > 0.01 & high_mu == TRUE, TRUE, FALSE)) %>%
+  filter(
+    !is.na(KS_cutoff),
+    !is.na(log2FoldChange_STAPseq_zfh1),
+    !is.na(log2FoldChange_zfh1)
+  ) %>%
+  ggplot() +
+  geom_point(aes(x = log2FoldChange_STAPseq_zfh1, y = log2FoldChange_zfh1, color = KS_cutoff),
+             alpha = 0.3) +
+  geom_abline(aes(intercept = fitlm$coefficients[1], slope = fitlm$coefficients[2]),
+              linetype = "dashed") +
+  scale_color_manual(values = c("grey", "red", "grey")) +
+  ggtitle("BARe-seq library activity vs. STAP-seq (zfh1)") +
+      labs(title = paste0("PCC = ", round(PCC, digits = 2))) +
+      ylab("log2FC BARe-seq promoter activity") +
+      xlab("log2FC STAP-seq promoter activity") +
+  coord_fixed(xlim = c(-3, 15), ylim = c(-3, 15)) +
+  theme_classic(base_size = 15)
+p_color
+
+# Optional manual PDF export:
+# pdf(paste0(out_dir,"log2FC_zfh1_KS_pval_mu.pdf"), width = 5, height = 5)
+# print(p_color)
+# dev.off()
+```
+
+## SUPPL. FIG. 2B / 2D — replicate correlations
+
+Pairwise replicate correlations of the burst parameters for the zfh1 library.
+The same comparison is drawn for three filtering levels:
+
+  * "unfiltered"    -> Suppl. Fig. 2B (all sequences)
+  * "mu_and_KSpval" -> Suppl. Fig. 2D (KS-pval > 0.01 & mu threshold)
+
+("KS_pval_0.01" is an intermediate QC level kept for reference.)
+
+```{r}
+# Datasets at the three filtering levels
+data_list <- list(
+  "unfiltered"    = STAP_annotated,
+  "KS_pval_0.01"  = STAP_annotated %>% filter(KS_pval > 0.01),
+  "mu_and_KSpval" = STAP_annotated %>% filter(KS_pval > 0.01 & high_mu == TRUE)
+)
+
+# Replicate pair to compare (zfh1 replicate 1 vs. replicate 2)
+comparisons <- list(
+  zfh1_reps = c("libFL001_STAP_zfh1_replicate1", "libFL001_STAP_zfh1_replicate2")
+)
+```
+
+```{r, echo = FALSE}
+# Compare two samples for burst size, burst frequency and expression.
+# Sample name layout used for parsing: lib_experiment_condition_rep
+replicate_comparison <- function(comp, data, dataset_name = "") {
+  l1 <- strsplit(comp[1], "_")[[1]][1]  # library
+  e1 <- strsplit(comp[1], "_")[[1]][2]  # experiment
+  r1 <- strsplit(comp[1], "_")[[1]][4]  # replicate
+
+  l2 <- strsplit(comp[2], "_")[[1]][1]
+  e2 <- strsplit(comp[2], "_")[[1]][2]
+  r2 <- strsplit(comp[2], "_")[[1]][4]
+
+  d1 <- as.data.table(data)[experiment == e1 & lib == l1 & rep == r1,
+                    c("bsize", "bfreq", "exp", "seq_ID")]
+  colnames(d1)[1:3] <- paste(colnames(d1)[1:3], e1, l1, r1, sep = "_")
+
+  d2 <- as.data.table(data)[experiment == e2 & lib == l2 & rep == r2,
+                    c("bsize", "bfreq", "exp", "seq_ID")]
+  colnames(d2)[1:3] <- paste(colnames(d2)[1:3], e2, l2, r2, sep = "_")
+
+  cast <- merge(d1, d2, by = "seq_ID", allow.cartesian = TRUE)
+
+  if (nrow(cast) == 0) {
+    warning(paste("No data overlap for comparison:", comp[1], "vs", comp[2],
+                  "in dataset:", dataset_name))
+    return(NULL)
+  }
+
+  # --- burst size ---
+  x.size <- paste("bsize", e1, l1, r1, sep = "_")
+  y.size <- paste("bsize", e2, l2, r2, sep = "_")
+  df_size <- data.frame(x = log10(cast[[x.size]]), y = log10(cast[[y.size]]))
+  df_size <- df_size[is.finite(df_size$x) & is.finite(df_size$y), ]
+  if (nrow(df_size) < 2) return(NULL)
+  fitlm <- lm(y ~ x, data = df_size)
+  PCC <- cor(df_size$x, df_size$y, method = "pearson", use = "complete.obs")
+
+  size <- ggplot(df_size, aes(x = x, y = y)) +
+    geom_point(alpha = 0.2) +
+    geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "red", linetype = "dashed") +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "darkgrey") +
+    coord_cartesian(xlim = c(-1.5, 1.5), ylim = c(-1.5, 1.5)) +
+    labs(
+      title = paste0("Burst size (Dataset: ", dataset_name, ")"),
+      subtitle = paste0(comp[1], " vs ", comp[2],
+                    "\nPCC = ", round(PCC, 2),
+                    "   R² = ", round(summary(fitlm)$r.squared, 2)),
+      x = paste0("log10(burst_size_", comp[1], ")"),
+      y = paste0("log10(burst_size_", comp[2], ")")
+    ) +
+    theme_classic()
+
+  # --- burst frequency ---
+  x.freq <- paste("bfreq", e1, l1, r1, sep = "_")
+  y.freq <- paste("bfreq", e2, l2, r2, sep = "_")
+  df_freq <- data.frame(x = log10(cast[[x.freq]]), y = log10(cast[[y.freq]]))
+  df_freq <- df_freq[is.finite(df_freq$x) & is.finite(df_freq$y), ]
+  if (nrow(df_freq) < 2) return(NULL)
+  fitlm_freq <- lm(y ~ x, data = df_freq)
+  PCC_freq <- cor(df_freq$x, df_freq$y, method = "pearson", use = "complete.obs")
+
+  freq <- ggplot(df_freq, aes(x = x, y = y)) +
+    geom_point(alpha = 0.2) +
+    geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "red", linetype = "dashed") +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "darkgrey") +
+    coord_cartesian(xlim = c(-2, 0.5), ylim = c(-2, 0.5)) +
+    labs(
+      title = paste0("Burst frequency (Dataset: ", dataset_name, ")"),
+      subtitle = paste0(comp[1], " vs ", comp[2],
+                    "\nPCC = ", round(PCC_freq, 2),
+                    "   R² = ", round(summary(fitlm_freq)$r.squared, 2)),
+      x = paste0("log10(burst_freq_", comp[1], ")"),
+      y = paste0("log10(burst_freq_", comp[2], ")")
+    ) +
+    theme_classic()
+
+  # --- expression ---
+  x.exp <- paste("exp", e1, l1, r1, sep = "_")
+  y.exp <- paste("exp", e2, l2, r2, sep = "_")
+  df_exp <- data.frame(x = log10(cast[[x.exp]]), y = log10(cast[[y.exp]]))
+  df_exp <- df_exp[is.finite(df_exp$x) & is.finite(df_exp$y), ]
+  if (nrow(df_exp) < 2) return(NULL)
+  fitlm_exp <- lm(y ~ x, data = df_exp)
+  PCC_exp <- cor(df_exp$x, df_exp$y, method = "pearson", use = "complete.obs")
+
+  exp_plot <- ggplot(df_exp, aes(x = x, y = y)) +
+    geom_point(alpha = 0.2) +
+    geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "red", linetype = "dashed") +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "darkgrey") +
+    coord_cartesian(xlim = c(-1.5, 1.5), ylim = c(-1.5, 1.5)) +
+    labs(
+      title = paste0("Expression (Dataset: ", dataset_name, ")"),
+      subtitle = paste0(comp[1], " vs ", comp[2],
+                    "\nPCC = ", round(PCC_exp, 2),
+                    "   R² = ", round(summary(fitlm_exp)$r.squared, 2)),
+      x = paste0("log10(exp_", comp[1], ")"),
+      y = paste0("log10(exp_", comp[2], ")")
+    ) +
+    theme_classic()
+
+  list(freq = freq, size = size, exp = exp_plot)
+}
+
+# Render all comparisons for one dataset and also write them to a PDF.
+process_and_save_plots <- function(data, name, comparisons) {
+  test <- lapply(comparisons, function(comp) {
+    replicate_comparison(comp, data, dataset_name = name)
+  })
+
+  pdf_filename <- paste0(out_dir, "Comparisons_", name, ".pdf")
+  pdf(pdf_filename, width = 4, height = 4)
+  for (res in test) {
+    if (!is.null(res)) {
+      print(res$freq)
+      print(res$size)
+      print(res$exp)
+    }
+  }
+  dev.off()
+  return(test)
+}
+```
+
+```{r}
+# Suppl. Fig. 2B  = "unfiltered" panels
+# Suppl. Fig. 2D  = "mu_and_KSpval" panels
+results <- Map(function(data, name) {
+  message(paste("Processing dataset:", name))
+  process_and_save_plots(data, name, comparisons)
+},
+data_list,
+names(data_list))
+
+for (dname in names(data_list)) {
+  cat("## Dataset:", dname, "\n\n")
+  for (cname in names(comparisons)) {
+    cat("### Comparison:", cname, "\n\n")
+    plots <- replicate_comparison(
+      comparisons[[cname]],
+      data_list[[dname]],
+      dataset_name = dname
+    )
+    if (!is.null(plots)) {
+      print(plots$freq)
+      print(plots$size)
+      print(plots$exp)
+    }
+  }
+}
+```
+
+## QC / exploratory — replicate correlation heatmaps
+
+Not a main figure panel. Pairwise Pearson correlation of each burst parameter
+across the replicate samples, for each filtering level.
+
+```{r, echo = FALSE}
+make_correlation_heatmap <- function(dt, feature, dataset_name, sample_reps = NULL) {
+  dt <- as.data.table(dt)
+  if (!"sample" %in% names(dt)) stop("No 'sample' column found in data")
+
+  wide_dt <- dt[, .(
+    seq_ID,
+    sample_label = sample,
+    value = as.numeric(get(feature))
+  )]
+
+  # Keep only the requested samples
+  if (!is.null(sample_reps)) {
+    wide_dt <- wide_dt[sample_label %in% sample_reps]
+  }
+  if (nrow(wide_dt) == 0) {
+    warning(paste("No data left after filtering for sample_reps in dataset:", dataset_name))
+    return(NULL)
+  }
+
+  wide_dt <- dcast(wide_dt, seq_ID ~ sample_label, value.var = "value")
+
+  mat <- as.matrix(wide_dt[, -1, with = FALSE])
+  storage.mode(mat) <- "numeric"
+  mat[mat <= 0] <- NA
+  mat <- log10(mat)
+  mat <- mat[, colSums(is.finite(mat)) >= 2, drop = FALSE]
+  if (ncol(mat) < 2) return(NULL)
+
+  cormat <- cor(mat, use = "pairwise.complete.obs", method = "pearson")
+  cormat_tbl <- as.data.frame(as.table(cormat))
+  colnames(cormat_tbl) <- c("Sample1", "Sample2", "Correlation")
+
+  ggplot(cormat_tbl, aes(Sample1, Sample2, fill = Correlation)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(
+      low = "#4575b4", mid = "white", high = "#d73027",
+      midpoint = 0.5, limits = c(0, 1), na.value = "grey90"
+    ) +
+    geom_text(aes(label = ifelse(is.na(Correlation), "NA", sprintf("%.2f", Correlation))), size = 3) +
+    labs(title = paste0("Dataset: ", dataset_name, " | Feature: ", feature), x = "", y = "") +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          panel.grid = element_blank())
+}
+```
+
+```{r}
+features <- c("exp", "bfreq", "bsize")
+all_heatmaps <- list()
+
+for (dname in names(data_list)) {
+  cat("Processing dataset:", dname, "\n")
+  dt <- data_list[[dname]]
+
+  for (f in features) {
+    p <- make_correlation_heatmap(dt, f, dname, sample_reps = sample_reps)
+    if (!is.null(p)) {
+      heatmap_name <- paste(dname, f, sep = "_")
+      all_heatmaps[[heatmap_name]] <- p
+      file_path <- paste0(out_dir, "Heatmap_", heatmap_name, ".pdf")
+      ggsave(filename = file_path, plot = p, width = 5, height = 5, units = "in")
+    }
+  }
+}
+
+for (nm in names(all_heatmaps)) {
+  print(all_heatmaps[[nm]])
+}
+```
