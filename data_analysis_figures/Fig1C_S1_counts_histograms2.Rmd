@@ -1,0 +1,375 @@
+---
+title: "promoter-BARe-seq: Figure 1C and Supplemental Figure 1 — count-based analyses"
+author: "FL"
+date: "2025-02-13"
+output: html_document
+---
+
+<!--
+================================================================================
+OVERVIEW  — Figure 1C and Supplemental Figure 1
+================================================================================
+This document reproduces the count-based panels of Figure 1 and Supplemental
+Figure 1:
+
+  Figure 1C: For individual promoters, shows the observed distribution of
+  reporter transcripts per plasmid (the "transcript/plasmid" histogram)
+  together with the fitted 0-truncated negative-binomial model. The fitted
+  burst parameters (burst size, burst frequency, mean expression) are printed
+  on each panel.
+
+  Supplemental Figure 1B: Library-level pUMI distribution showing the number
+  of times each plasmid UMI was observed.
+
+  Supplemental Figure 1D: Replicate comparison for two example promoters
+  (TATA and DPE), showing consistency of transcript/plasmid distributions
+  across biological replicates.
+
+Worked example: library libFL001 (STAP, zfh1). Only this one library is
+included here as a self-contained example; the same code runs unchanged on any
+other library.
+
+Inputs
+------
+1. Raw UMI counts (from the GEO repository accompanying the publication),
+   one file per replicate. Columns:
+       sample_name        publication sample name
+       seq_ID             promoter identifier
+       plasmid_UMI_main   unique plasmid UMI
+       N                  number of reporter transcripts on that plasmid
+   Expected in ./data :
+       libFL001_STAP_zfh1_replicate1_batch1_counts.txt
+       libFL001_STAP_zfh1_replicate2_batch2_counts.txt
+
+2. Table5_promoter_burst_parameters.xlsx (sheet "STAP"), expected in ./Tables .
+   Provides the inferred burst parameters (bsize, bfreq, exp) per sample; these
+   define the NB fit line drawn over each histogram.
+
+Model
+-----
+Transcript-per-plasmid counts are modelled with a 0-truncated negative
+binomial. In this parametrisation:
+    mean expression  (exp)   = mu     (the NB mean)
+    burst frequency  (bfreq) = size   (the NB size / dispersion parameter)
+    burst size       (bsize) = derived (mu / size)
+================================================================================
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(data.table)
+require(dplyr)
+require(ggplot2)
+require(readxl)
+require(gridExtra)
+require(patchwork)
+```
+
+## Data loading and pooling
+
+```{r, echo = FALSE}
+# ------------------------------------------------------------------------------
+# 1. Read the raw UMI counts for the two replicates of libFL001.
+#    (Obtain these files from the GEO data repository; place them in ./data .)
+# ------------------------------------------------------------------------------
+rep1 <- fread("/groups/stark/lorbeer/BARe-seq_GEO_submission_v2/libFL001_STAP_zfh1_replicate1_batch1_counts.txt")
+rep2 <- fread("/groups/stark/lorbeer/BARe-seq_GEO_submission_v2/libFL001_STAP_zfh1_replicate2_batch2_counts.txt")
+
+# Use the publication sample naming and a consistent column name.
+setnames(rep1, "sample_name", "sample")
+setnames(rep2, "sample_name", "sample")
+rep1[, sample := "libFL001_STAP_zfh1_replicate1"]
+rep2[, sample := "libFL001_STAP_zfh1_replicate2"]
+
+# ------------------------------------------------------------------------------
+# 2. Build the pooled sample.
+#    The pooled burst parameters in Table5 are inferred from the two
+#    replicates' UMIs combined, so the pool is simply the union of the two
+#    replicates' count rows, relabelled with the pooled sample name.
+# ------------------------------------------------------------------------------
+pool <- rbindlist(list(rep1, rep2), use.names = TRUE)
+pool[, sample := "libFL001_STAP_zfh1_pool"]
+
+# ------------------------------------------------------------------------------
+# 3. Stack replicates + pool into a single long count table and split the
+#    sample name into its components (lib / experiment / condition / rep).
+# ------------------------------------------------------------------------------
+count_data <- rbindlist(list(rep1, rep2, pool), use.names = TRUE)
+count_data[, c("library", "experiment", "condition", "rep") :=
+             tstrsplit(sample, "_", keep = 1:4)]
+
+# ------------------------------------------------------------------------------
+# 4. Burst parameters for these samples (the NB fit lines come from here).
+# ------------------------------------------------------------------------------
+burst_params <- as.data.table(
+  read_xlsx("/groups/stark/lorbeer/BARE-seq_data_prep/Tables/Table5_promoter_burst_parameters.xlsx", sheet = "STAP"))
+burst_params <- burst_params[grepl("^libFL001_", sample)]
+
+out_dir <- "output/Fig1/"
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+## NB-fit plotting function
+
+```{r, echo = FALSE}
+# 0-truncated negative binomial density.
+# Parametrisation: mu = mean expression (exp), size = burst frequency (bfreq).
+d0T_NB <- function(x, mu, size) {
+  dnbinom(x, mu = mu, size = size) / (1 - dnbinom(0, mu = mu, size = size))
+}
+
+# For each requested promoter (seq_id) in a chosen sample, draw the observed
+# transcript/plasmid histogram (relative frequency) with the fitted 0-truncated
+# NB density on top, annotated with burst size / frequency / mean expression.
+# Promoters are shown as stacked facets (as in Figure 1C).
+plot_nb_fit <- function(count_data, burst_params, seq_ids, sample_sel,
+                        x_max = 25) {
+
+  count_data   <- as.data.table(count_data)
+  burst_params <- as.data.table(burst_params)
+
+  obs_list <- list(); fit_list <- list(); lab_list <- list()
+
+  for (sid in seq_ids) {
+    # observed transcript/plasmid counts for this promoter in the chosen sample
+    x   <- count_data[sample == sample_sel & seq_ID == sid, N]
+    par <- burst_params[sample == sample_sel & seq_ID == sid]
+
+    if (length(x) == 0 || nrow(par) == 0) {
+      warning(paste("No counts/parameters for", sid, "in", sample_sel))
+      next
+    }
+
+    mu <- par$exp[1]     # NB mean            = mean expression
+    sz <- par$bfreq[1]   # NB size            = burst frequency
+    bs <- par$bsize[1]   # derived burst size
+
+    # keep promoter order stable across the facets
+    ord <- match(sid, seq_ids)
+
+    obs_list[[sid]] <- data.frame(N = x, seq_ID = sid, ord = ord)
+
+    xr <- 1:max(x)
+    fit_list[[sid]] <- data.frame(x = xr,
+                                  density = d0T_NB(xr, mu = mu, size = sz),
+                                  seq_ID = sid, ord = ord)
+
+    lab_list[[sid]] <- data.frame(
+      seq_ID = sid, ord = ord,
+      label  = sprintf("size = %.1f\nfreq = %.2f\nexp = %.2f", bs, sz, mu))
+  }
+
+  obs <- bind_rows(obs_list)
+  fit <- bind_rows(fit_list)
+  lab <- bind_rows(lab_list)
+
+  # order facets as requested
+  lev <- unique(obs$seq_ID[order(obs$ord)])
+  obs$seq_ID <- factor(obs$seq_ID, levels = lev)
+  fit$seq_ID <- factor(fit$seq_ID, levels = lev)
+  lab$seq_ID <- factor(lab$seq_ID, levels = lev)
+
+  ggplot(obs, aes(x = N)) +
+    geom_histogram(aes(y = after_stat(density)), binwidth = 1,
+                   fill = "#9ecae1", colour = "white", alpha = 0.9) +
+    geom_line(data = fit, aes(x = x, y = density),
+              colour = "orange", linewidth = 1) +
+    geom_text(data = lab, aes(label = label),
+              x = Inf, y = Inf, hjust = 1.1, vjust = 1.1, size = 3.5) +
+    facet_wrap(~ seq_ID, ncol = 1, scales = "free_y") +
+    coord_cartesian(xlim = c(0, x_max)) +
+    labs(x = "Transcript/plasmid", y = "Relative frequency") +
+    theme_classic(base_size = 13)
+}
+```
+
+## SUPPLEMENTAL FIGURE 1B — library pUMI distribution
+
+Distribution of the number of times each plasmid UMI (pUMI) is observed in the
+sequenced input (plasmid) library. The vast majority of pUMIs are observed
+exactly once (98.3% in the figure), confirming that each pUMI marks a distinct
+plasmid molecule rather than a PCR/sequencing duplicate.
+
+Note: this panel is built from the INPUT library counts, not the RNA counts.
+The required file is the input (plasmid) count table for one replicate:
+    libFL001_input_zfh1_replicate1_counts.txt   (expected in ./data)
+It is assumed to share the column layout of the RNA count files
+(sample_name, seq_ID, plasmid_UMI_main, N), where N is the number of
+observations (reads) supporting each pUMI.
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height = 3, fig.width = 4}
+# ------------------------------------------------------------------------------
+# Read the input (plasmid) library counts. Each row is one plasmid UMI with
+# N = number of observations of that pUMI in the sequenced input library.
+# ------------------------------------------------------------------------------
+input_counts <- fread("/groups/stark/lorbeer/BARe-seq_GEO_submission_v2/libFL001_input_zfh1_replicate1_counts.txt")
+setnames(input_counts, "sample_name", "sample")
+
+# Expected plasmid-UMI structure for this library, taken from the libFL library
+# specification table. libFL001 (STAP, zfh1) uses the "fix" 30-nt pUMI design:
+#   GC NNNN AC NNNN GT NNNN TA NNNN AC NNNN     (N = any of T/G/C/A)
+umi_pattern <- "GC[TGCA]{4}AC[TGCA]{4}GT[TGCA]{4}TA[TGCA]{4}AC[TGCA]{4}"
+
+# ------------------------------------------------------------------------------
+# 2. Filter: remove unmapped promoters and poly-G plasmid UMIs, then flag
+#    whether each pUMI matches the expected structured pattern.
+# ------------------------------------------------------------------------------
+input_counts <- input_counts[seq_ID != "*" & !grepl("GGGGGG", plasmid_UMI)]
+input_counts[, UMI_match := grepl(umi_pattern, plasmid_UMI)]
+
+# ------------------------------------------------------------------------------
+# 3. Bin the per-pUMI observation count (column N) into 1, 2, 3, 4+ and plot.
+#    (To restrict to structurally valid pUMIs only, set the filter below to
+#     input_counts[UMI_match == TRUE].)
+# ------------------------------------------------------------------------------
+pumi_dist <- input_counts %>%
+  mutate(n_obs_capped = if_else(N > 4, 4L, as.integer(N))) %>%
+  count(n_obs_capped, name = "count") %>%
+  mutate(pct = 100 * count / sum(count))
+
+# Percentage labels on each bar
+labels <- pumi_dist %>%
+  mutate(label = if_else(pct >= 1,
+                         sprintf("%.1f%%", pct),
+                         sprintf("%.2f%%", pct)))
+
+p_pumi <- ggplot(pumi_dist, aes(x = factor(n_obs_capped), y = count)) +
+  geom_bar(stat = "identity", fill = "grey30", width = 0.7) +
+  geom_text(data = labels, aes(label = label), vjust = -0.3, size = 3.5) +
+  scale_y_continuous(labels = function(x) x / 1e6,
+                     expand = expansion(mult = c(0, 0.15))) +
+  labs(x = "No. observations",
+       y = expression("count " * x10^6),
+       title = "Library pUMIs") +
+  theme_classic(base_size = 13)
+print(p_pumi)
+
+# Optional manual PDF export:
+# pdf(paste0(out_dir, "SuppFig1B_pUMI_distribution.pdf"), width = 4, height = 3)
+# print(p_pumi)
+# dev.off()
+```
+
+## SUPPLEMENTAL FIGURE 1D — replicate / promoter comparison histograms
+
+Two example promoters are compared: the high-burst-size TATA promoter
+chrX_9556722_9556855_- and the high-burst-frequency DPE promoter
+chr2R_8592612_8592745_+. Figure 1D shows the transcript/plasmid distributions
+from two complementary views:
+
+  * LEFT  (facet per promoter, colored by replicate): the two biological
+    replicates overlaid on the same promoter, showing replicate reproducibility.
+  * RIGHT (facet per replicate, colored by promoter): the two promoters overlaid
+    within the same replicate, showing that the promoters have distinct shapes.
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height = 5, fig.width = 10}
+# The two example promoters highlighted in Suppl. Fig. 1D
+suppfig1d_promoters <- c(
+  "chr2R_8592612_8592745_+",   # DPE  (orange in the figure)
+  "chrX_9556722_9556855_-"     # TATA (cyan in the figure)
+)
+
+# Extract counts for these promoters in both replicates
+rep_comp <- count_data %>%
+  filter(rep %in% c("replicate1", "replicate2"),
+         seq_ID %in% suppfig1d_promoters)
+
+# Nicer replicate labels for legends / facets
+rep_labels <- c(replicate1 = "Replicate 1", replicate2 = "Replicate 2")
+rep_comp <- rep_comp %>%
+  mutate(rep_label = rep_labels[rep])
+
+# ------------------------------------------------------------------------------
+# LEFT column: overlapping replicates, one facet per promoter.
+# Each promoter gets its own two-tone palette (light = rep1, dark = rep2),
+# matching the gold (DPE) and cyan (TATA) shading in the figure.
+# ------------------------------------------------------------------------------
+rep_shades <- c("Replicate 1" = "goldenrod2", "Replicate 2" = "goldenrod4")  # DPE panel
+rep_shades_tata <- c("Replicate 1" = "cyan3",  "Replicate 2" = "darkcyan")   # TATA panel
+
+p_dpe <- rep_comp %>%
+  filter(seq_ID == "chr2R_8592612_8592745_+") %>%
+  ggplot(aes(x = N, fill = rep_label, color = rep_label)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 1,
+                 position = "identity", alpha = 0.5) +
+  scale_fill_manual(values = rep_shades, name = "sample") +
+  scale_color_manual(values = rep_shades, name = "sample") +
+  coord_cartesian(xlim = c(0, 50)) +
+  labs(x = "transcript/plasmid", y = "Relative frequency",
+       title = "chr2R_8592612_8592745_+") +
+  theme_classic(base_size = 13)
+
+p_tata <- rep_comp %>%
+  filter(seq_ID == "chrX_9556722_9556855_-") %>%
+  ggplot(aes(x = N, fill = rep_label, color = rep_label)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 1,
+                 position = "identity", alpha = 0.5) +
+  scale_fill_manual(values = rep_shades_tata, name = "sample") +
+  scale_color_manual(values = rep_shades_tata, name = "sample") +
+  coord_cartesian(xlim = c(0, 50)) +
+  labs(x = "transcript/plasmid", y = "Relative frequency",
+       title = "chrX_9556722_9556855_-") +
+  theme_classic(base_size = 13)
+
+# ------------------------------------------------------------------------------
+# RIGHT column: overlapping promoters, one facet per replicate.
+# ------------------------------------------------------------------------------
+prom_colors <- c("chr2R_8592612_8592745_+" = "orange",
+                 "chrX_9556722_9556855_-"  = "darkcyan")
+
+make_prom_panel <- function(rep_sel, title) {
+  rep_comp %>%
+    filter(rep == rep_sel) %>%
+    ggplot(aes(x = N, fill = seq_ID, color = seq_ID)) +
+    geom_histogram(aes(y = after_stat(density)), binwidth = 1,
+                   position = "identity", alpha = 0.5) +
+    scale_fill_manual(values = prom_colors, name = "promoter") +
+    scale_color_manual(values = prom_colors, name = "promoter") +
+    coord_cartesian(xlim = c(0, 50)) +
+    labs(x = "transcript/plasmid", y = "Relative frequency", title = title) +
+    theme_classic(base_size = 13)
+}
+
+p_rep1 <- make_prom_panel("replicate1", "Replicate 1")
+p_rep2 <- make_prom_panel("replicate2", "Replicate 2")
+
+# ------------------------------------------------------------------------------
+# Assemble the 2x2 layout: promoter facets (left) + replicate facets (right).
+# ------------------------------------------------------------------------------
+p_suppfig1d <- (p_dpe / p_tata) | (p_rep1 / p_rep2)
+print(p_suppfig1d)
+
+# Optional manual PDF export:
+# pdf(paste0(out_dir, "SuppFig1D_replicate_comparison.pdf"), width = 10, height = 5)
+# print(p_suppfig1d)
+# dev.off()
+```
+
+## FIGURE 1C — example promoters
+
+The three example promoters highlighted in Figure 1B/1C, shown for the pooled
+libFL001 sample. Each panel shows the observed transcript/plasmid distribution
+(blue) and the fitted 0-truncated NB model (orange), annotated with the
+inferred burst parameters.
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.height = 8, fig.width = 4}
+# The three Figure 1C examples (order 1-2-3 as in the figure):
+#   1  size ~ 4.2,  freq ~ 0.8,  exp ~ 3.4
+#   2  size ~ 16.3, freq ~ 0.05, exp ~ 0.8
+#   3  size ~ 1.8,  freq ~ 1.8,  exp ~ 3.2
+fig1c_examples <- c(
+  "chr2L_21629861_21629994_-",
+  "chrX_9556722_9556855_-",
+  "chr2R_8592612_8592745_+"
+)
+
+p_fig1c <- plot_nb_fit(count_data, burst_params,
+                       seq_ids    = fig1c_examples,
+                       sample_sel = "libFL001_STAP_zfh1_pool")
+print(p_fig1c)
+
+# Optional manual PDF export:
+# pdf(paste0(out_dir, "Fig1C_transcript_plasmid_NBfit.pdf"), width = 4, height = 8)
+# print(p_fig1c)
+# dev.off()
+```
