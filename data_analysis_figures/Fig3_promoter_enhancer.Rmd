@@ -1,0 +1,386 @@
+---
+title: "Figure 3 — global burst-parameter trends: promoters vs enhancers"
+author: "FL"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+<!--
+================================================================================
+FIGURE / PANEL MAP  (which chunk makes which panel)
+================================================================================
+This script compares how promoters (STAP-seq) and enhancers (STARR-seq) shape
+burst parameters (burst size, burst frequency) as a function of mean expression.
+
+FIGURE 3
+  3A  Promoter library: burst size vs mean expression (top) and
+      burst frequency vs mean expression (bottom); coloured by promoter
+      condition (zfh1 / CG4822 / Pld) ...................... chunk "FIGURE 3A"
+  3B  Enhancer library: same layout, coloured by enhancer
+      condition (DSCP / Rpl35 / Rps15A) ................... chunk "FIGURE 3B"
+  3C  Slope bar plots across all 6 samples:
+      slope of burst size ~ expression (top) and
+      slope of burst frequency ~ expression (bottom),
+      annotated with R2 and p-value ....................... chunk "FIGURE 3C"
+Supplemental FIGURE 4
+  4D viridis mean colored scatter 
+  
+  Exploratory / QC chunks that are NOT publication panels are kept and clearly
+  labelled "EXPLORATORY" (all-samples-overlaid
+  fit plots; regression-summary tables). Every fit is generated for BOTH plot
+  orientations (expression on x-axis and expression on y-axis) so either can be
+  used downstream -- see the `exp_on_x` argument of `make_fit_plot()` /
+  `summarize_lm_direction()`.
+
+  NOTE: no plots are written to disk in this version -- every figure is only
+  displayed inline (per request). To save a figure, wrap it in the usual
+  pdf(...) / print(...) / dev.off() block yourself.
+
+All data comes from the published supplemental tables (Tables 5 and 7), read in
+the data-loading chunk below. All former internal cluster paths (data .rds
+files, the mu-threshold Excel sheet, the output directory) have been removed.
+The mu-threshold merge/recompute is no longer needed because Tables 5 and 7
+already ship the quality flags `high_mu` and `KS_pval` used for filtering.
+================================================================================
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(tibble)
+library(scales)
+library(forcats)
+library(viridis)
+```
+
+## Sample definitions and colour scheme
+
+```{r sample-definitions}
+# Published sample names (pooled replicates).
+# Promoters were assayed by STAP-seq, enhancers by STARR-seq.
+samples_promoter <- c(
+  "libFL001_STAP_zfh1_pool",
+  "libFL002_STAP_CG4822_pool",
+  "libFL003_STAP_Pld_pool"
+)
+
+samples_enhancer <- c(
+  "libFL004_STARR_DSCP_pool",
+  "libFL005_STARR_Rpl35_pool",
+  "libFL006_STARR_Rps15A_pool"
+)
+
+samples_all <- c(samples_promoter, samples_enhancer)
+
+# Colour scheme used for the publication figure:
+#   promoters  -> yellow/orange shades
+#   enhancers  -> green/teal shades
+palette_all <- c(
+  "libFL001_STAP_zfh1_pool"    = "#F2994A",
+  "libFL002_STAP_CG4822_pool"  = "#F7D154",
+  "libFL003_STAP_Pld_pool"     = "#B87400",
+  "libFL004_STARR_DSCP_pool"   = "#66C2A5",
+  "libFL005_STARR_Rpl35_pool"  = "#009E73",
+  "libFL006_STARR_Rps15A_pool" = "#005D5D"
+)
+
+palette_promoter <- palette_all[samples_promoter]
+palette_enhancer <- palette_all[samples_enhancer]
+```
+
+## Loading and merging burst-parameter data
+
+We build one combined data set `dat_base` containing the burst parameters
+(burst size `bsize`, burst frequency `bfreq`, mean expression `exp`) for all
+samples, then keep only high-quality promoters/enhancers
+(`high_mu == TRUE & KS_pval > 0.01`).
+
+```{r load-data}
+# ---- Promoters (STAP-seq): published Table 5, sheet "STAP" ----
+burst_STAP <- as.data.table(
+  read_xlsx("/groups/stark/lorbeer/BARE-seq_data_prep/Tables/Table5_promoter_burst_parameters.xlsx", sheet = "STAP")
+)
+
+# ---- Enhancers (STARR-seq): published Table 7, sheet "STARR" ----
+burst_STARR <- as.data.table(
+  read_xlsx("/groups/stark/lorbeer/BARE-seq_data_prep/Tables/Table7_enhancer_burst_parameters.xlsx", sheet = "STARR")
+)
+
+# ---- Combine ----
+# Both tables have the same schema (seq_ID, sample, bfreq, bsize, exp,
+# log2FoldChange, high_mu, KS_pval), so we stack them directly.
+dat <- rbind(burst_STAP, burst_STARR)
+
+# Parse the published sample name into its components:
+#   <library>_<assay>_<condition>_<rep>   e.g. libFL001_STAP_zfh1_pool
+dat[, c("library", "assay", "condition", "rep") :=
+      tstrsplit(sample, "_", fixed = TRUE)]
+
+# Quality filter (Tables 5 and 7 already ship high_mu and KS_pval).
+dat_base <- dat %>%
+  filter(
+    KS_pval > 0.01,
+    high_mu == TRUE,
+    sample %in% samples_all
+  )
+```
+
+## EXPLORATORY — mean-coloured burst-size vs burst-frequency scatter
+
+```{r exploratory-mean-color}
+mean_color <- dat_base %>%
+  filter(sample %in% samples_all) %>%
+  mutate(sample = fct_relevel(sample, samples_all)) %>%
+  ggplot() +
+  geom_point(aes(y = log10(bsize), x = log10(bfreq), color = log10(exp))) +
+  scale_color_viridis(
+    alpha = 1, begin = 0, end = 1, direction = 1,
+    discrete = FALSE, option = "D", aesthetics = "color"
+  ) +
+  facet_wrap(~sample) +
+  theme_classic(base_size = 15)
+mean_color
+```
+
+## Plotting and regression helper functions
+
+`make_fit_plot()` and `summarize_lm_direction()` both take `exp_on_x`, so the
+relationship can be plotted / modelled with expression on either axis.
+
+```{r helper-functions}
+# Keep only rows usable on a log10 scale for the requested parameter, and lock
+# the sample factor order so colours/legends stay consistent.
+prep_plot_data <- function(df, param, sample_levels) {
+  df %>%
+    filter(sample %in% sample_levels, exp > 0, .data[[param]] > 0) %>%
+    mutate(sample = factor(sample, levels = sample_levels))
+}
+
+# Scatter + linear fit of a burst parameter against mean expression.
+#   exp_on_x = TRUE  -> x = log10(exp),   y = log10(param)
+#   exp_on_x = FALSE -> x = log10(param), y = log10(exp)
+make_fit_plot <- function(df, param, exp_on_x = FALSE, show_points = FALSE,
+                          sample_levels, palette_vals,
+                          xlim = NULL, ylim = NULL, title_text = NULL) {
+
+  df_plot <- prep_plot_data(df, param, sample_levels)
+
+  # Guard: if none of the requested samples are present (e.g. enhancer data
+  # not supplied), return an informative placeholder instead of erroring.
+  if (nrow(df_plot) == 0) {
+    return(
+      ggplot() + theme_void() +
+        annotate("text", x = 0, y = 0,
+                 label = "No data for the selected samples\n(see MISSING INPUT in header)")
+    )
+  }
+
+  if (exp_on_x) {
+    p <- ggplot(df_plot, aes(x = log10(exp), y = log10(.data[[param]])))
+  } else {
+    p <- ggplot(df_plot, aes(x = log10(.data[[param]]), y = log10(exp)))
+  }
+
+  if (show_points) {
+    p <- p + geom_point(aes(color = sample), alpha = 0.25)
+  }
+
+  p +
+    geom_smooth(
+      aes(color = sample, fill = sample),
+      method = "lm", formula = y ~ x, se = TRUE, alpha = 0.2
+    ) +
+    scale_color_manual(values = palette_vals) +
+    scale_fill_manual(values = palette_vals) +
+    coord_cartesian(xlim = xlim, ylim = ylim) +
+    theme_classic(base_size = 15) +
+    theme(legend.position = "none") +
+    labs(
+      title = title_text,
+      x = if (exp_on_x) "log10(mean expression)" else paste0("log10(", param, ")"),
+      y = if (exp_on_x) paste0("log10(", param, ")") else "log10(mean expression)"
+    )
+}
+
+# Per-sample linear-model summary (slope, SE, p, R2, ...) in either direction.
+summarize_lm_direction <- function(df, param, exp_on_x = TRUE, sample_levels) {
+  df_model <- prep_plot_data(df, param, sample_levels) %>%
+    mutate(
+      x = if (exp_on_x) log10(exp) else log10(.data[[param]]),
+      y = if (exp_on_x) log10(.data[[param]]) else log10(exp)
+    ) %>%
+    filter(is.finite(x), is.finite(y))
+
+  df_model %>%
+    group_by(sample) %>%
+    do({
+      m <- lm(y ~ x, data = .)
+      tibble(
+        intercept    = coef(m)[["(Intercept)"]],
+        slope        = coef(m)[["x"]],
+        intercept_se = coef(summary(m))[1, "Std. Error"],
+        slope_se     = coef(summary(m))[2, "Std. Error"],
+        slope_p      = coef(summary(m))[2, "Pr(>|t|)"],
+        r2           = summary(m)$r.squared,
+        adj_r2       = summary(m)$adj.r.squared,
+        sigma        = summary(m)$sigma,
+        nobs         = length(m$fitted.values)
+      )
+    }) %>%
+    ungroup() %>%
+    mutate(sample = factor(sample, levels = sample_levels)) %>%
+    arrange(sample)
+}
+
+# Combined "R2=.., p=.." annotation used on the slope bar plots.
+fmt_label <- function(p, r2) {
+  p_str <- dplyr::case_when(
+    is.na(p) ~ "p = NA",
+    p < 1e-4 ~ "p < 0.0001",
+    p < 1e-3 ~ "p < 0.001",
+    TRUE     ~ paste0("p = ", scales::number(p, accuracy = 0.001))
+  )
+  sprintf("R2=%.2f, %s", r2, p_str)
+}
+
+# Bar plot of per-sample regression slopes +/- SE, annotated with R2 and p.
+plot_slopes <- function(stats_df, palette_vals, title_text, y_label) {
+  if (nrow(stats_df) == 0) {
+    return(
+      ggplot() + theme_void() +
+        annotate("text", x = 0, y = 0,
+                 label = "No data for the selected samples\n(see MISSING INPUT in header)")
+    )
+  }
+  ymax <- max(stats_df$slope + stats_df$slope_se, na.rm = TRUE)
+  ymin <- min(stats_df$slope - stats_df$slope_se, na.rm = TRUE)
+  label_offset <- 0.05 * max(ymax - ymin, 0.1)
+
+  ggplot(stats_df, aes(x = sample, y = slope, fill = sample)) +
+    geom_col(width = 0.8) +
+    geom_errorbar(aes(ymin = slope - slope_se, ymax = slope + slope_se), width = 0.2) +
+    geom_text(
+      aes(y = slope + slope_se + label_offset, label = fmt_label(slope_p, r2)),
+      size = 3.5, vjust = 0
+    ) +
+    scale_fill_manual(values = palette_vals, guide = "none") +
+    theme_classic(base_size = 15) +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1)) +
+    labs(title = title_text, x = "Sample", y = y_label)
+}
+```
+
+## EXPLORATORY — regression summary tables (both orientations)
+
+```{r exploratory-lm-tables}
+bfreq_on_exp_stats <- summarize_lm_direction(dat_base, "bfreq", exp_on_x = TRUE,  sample_levels = samples_all)
+bsize_on_exp_stats <- summarize_lm_direction(dat_base, "bsize", exp_on_x = TRUE,  sample_levels = samples_all)
+exp_on_bfreq_stats <- summarize_lm_direction(dat_base, "bfreq", exp_on_x = FALSE, sample_levels = samples_all)
+exp_on_bsize_stats <- summarize_lm_direction(dat_base, "bsize", exp_on_x = FALSE, sample_levels = samples_all)
+
+print("bfreq ~ exp"); bfreq_on_exp_stats
+print("bsize ~ exp"); bsize_on_exp_stats
+print("exp ~ bfreq"); exp_on_bfreq_stats
+print("exp ~ bsize"); exp_on_bsize_stats
+```
+
+## EXPLORATORY — all samples overlaid (promoters + enhancers together)
+
+```{r exploratory-all-overlaid}
+all_bfreq_expY_nopoints <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = FALSE, show_points = FALSE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-2, 0.5), ylim = c(-1.5, 1.25),
+  title_text = "All samples: log10(exp) vs log10(bfreq)"
+)
+all_bfreq_expX_points <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-1.5, 1.25), ylim = c(-2, 0.5),
+  title_text = "All samples: log10(bfreq) vs log10(exp) + points"
+)
+all_bsize_expX_points <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_all, palette_vals = palette_all,
+  xlim = c(-1.25, 1.25), ylim = c(-1.5, 1.5),
+  title_text = "All samples: log10(bsize) vs log10(exp) + points"
+)
+
+all_bfreq_expY_nopoints
+all_bfreq_expX_points
+all_bsize_expX_points
+```
+
+## FIGURE 3A — promoter library (burst size / frequency vs expression)
+
+```{r FIGURE 3A}
+promoter_bsize_expX_points <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_promoter, palette_vals = palette_promoter,
+  xlim = c(-1.25, 1.25), ylim = c(-1.5, 1.5),
+  title_text = "Promoters: log10(bsize) vs log10(exp)"
+)
+
+promoter_bfreq_expX_points <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_promoter, palette_vals = palette_promoter,
+  xlim = c(-1.5, 1.25), ylim = c(-2, 0.5),
+  title_text = "Promoters: log10(bfreq) vs log10(exp)"
+)
+
+# Panel 3A (top = burst size, bottom = burst frequency)
+promoter_bsize_expX_points
+promoter_bfreq_expX_points
+```
+
+## FIGURE 3B — enhancer library (burst size / frequency vs expression)
+
+```{r FIGURE 3B}
+enhancer_bsize_expX_points <- make_fit_plot(
+  dat_base, "bsize", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_enhancer, palette_vals = palette_enhancer,
+  xlim = c(-1.25, 1.25), ylim = c(-1.5, 1.5),
+  title_text = "Enhancers: log10(bsize) vs log10(exp)"
+)
+
+enhancer_bfreq_expX_points <- make_fit_plot(
+  dat_base, "bfreq", exp_on_x = TRUE, show_points = TRUE,
+  sample_levels = samples_enhancer, palette_vals = palette_enhancer,
+  xlim = c(-1.5, 1.25), ylim = c(-2, 0.5),
+  title_text = "Enhancers: log10(bfreq) vs log10(exp)"
+)
+
+# Panel 3B (top = burst size, bottom = burst frequency)
+enhancer_bsize_expX_points
+enhancer_bfreq_expX_points
+```
+
+## FIGURE 3C — regression slopes across all samples
+
+```{r FIGURE 3C}
+bsize_stats_expX_all <- summarize_lm_direction(
+  dat_base, "bsize", exp_on_x = TRUE, sample_levels = samples_all
+)
+bfreq_stats_expX_all <- summarize_lm_direction(
+  dat_base, "bfreq", exp_on_x = TRUE, sample_levels = samples_all
+)
+
+slope_bsize_expX_all <- plot_slopes(
+  bsize_stats_expX_all, palette_vals = palette_all,
+  title_text = "Slope of log10(bsize) ~ log10(exp)",
+  y_label = "Slope: burst size on expression"
+)
+slope_bfreq_expX_all <- plot_slopes(
+  bfreq_stats_expX_all, palette_vals = palette_all,
+  title_text = "Slope of log10(bfreq) ~ log10(exp)",
+  y_label = "Slope: burst frequency on expression"
+)
+
+# Panel 3C (top = slope of burst size, bottom = slope of burst frequency)
+slope_bsize_expX_all
+slope_bfreq_expX_all
+```
