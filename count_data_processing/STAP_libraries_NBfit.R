@@ -5,7 +5,7 @@
 
 library(dplyr)
 library(numDeriv)
-source("../main_functions/R01_Opitmization_Functions.R") #adapt the path if required
+source("R01_Opitmization_Functions.R") #adapt the path if required
 
 
 #Import datasets of the promoter libraries
