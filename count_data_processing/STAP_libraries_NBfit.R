@@ -11,7 +11,7 @@ source("R01_Opitmization_Functions.R") #adapt the path if required
 #Import datasets of the promoter libraries
 dir_files <- "./data" #adapt the path with the directory containing the files with raw UMI counts of the promoter libraries (STAP-seq experiments)
 count_files <- list.files(path=dir_files)
-count_files <- grep("STAP", count_files, value=TRUE) #subsetting to file with only STAP-seq experiments
+count_files <- grep("STAP", count_files, value=TRUE) #subsetting to files with only STAP-seq experiments
 
 #Import datasets into a list object
 data_list <- lapply(count_files, function(y){
@@ -66,6 +66,6 @@ for (i in 1:length(dataX)){
 }
 
 
-#Export the files
+#Export the parameter values
 library(WriteXLS)
 WriteXLS(dataX, ExcelFileName = "Promoter_burst_parameters_NB.xls", SheetNames =names(dataX),row.names=TRUE)
