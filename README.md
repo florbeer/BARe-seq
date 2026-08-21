@@ -13,7 +13,5 @@ Transcriptional bursts determine RNA output through two kinetic parameters: burs
 This repository contains the data processing pipeline and analysis code used to generate the figures in the BARe-seq manuscript.
 
 - `seq-data_processing/`: Steps for processing raw FASTQ files into counts files
-- `count-data_processing/`: R scripts for inferring bursting parameters, by using the counts files
-- `main_functions/`: Core functions used across analyses
-- `general_workflows/`: General-purpose analysis workflows
+- `count-data_processing/`: R scripts for inferring bursting parameters, by using the counts files. It also includes scripts of simulated data.
 - `data_analysis_figures/`: Code for individual analyses presented in the BARe-seq manuscript figures
